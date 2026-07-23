@@ -905,6 +905,21 @@ function AdminView({ token }) {
     }
   };
 
+  // NEW: Function to delete/reject pending user
+  const handleRejectUser = async (userId) => {
+    try {
+      const res = await fetch(`${API_URL}/admin/reject-user/${userId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        fetchPendingUsers(); // Refresh list after deleting
+      }
+    } catch (err) {
+      console.error('Failed rejecting user:', err);
+    }
+  };
+
   return (
     <View className="flex-1 bg-[#05070a] p-4">
       <View className="flex-row justify-between items-center mb-4">
@@ -945,12 +960,24 @@ function AdminView({ token }) {
                 </Text>
               </View>
 
-              <TouchableOpacity
-                onPress={() => handleApproveUser(item._id)}
-                className="bg-amber-500 px-4 py-2.5 rounded-xl active:scale-95 shadow-md shadow-amber-500/20"
-              >
-                <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">Approve</Text>
-              </TouchableOpacity>
+              {/* Action Buttons Container */}
+              <View className="flex-row items-center gap-2">
+                {/* Reject/Delete Button */}
+                <TouchableOpacity
+                  onPress={() => handleRejectUser(item._id)}
+                  className="bg-rose-950/40 border border-rose-800/50 px-3 py-2.5 rounded-xl active:scale-95"
+                >
+                  <Text className="text-rose-400 font-bold text-xs uppercase">Reject</Text>
+                </TouchableOpacity>
+
+                {/* Approve Button */}
+                <TouchableOpacity
+                  onPress={() => handleApproveUser(item._id)}
+                  className="bg-amber-500 px-3 py-2.5 rounded-xl active:scale-95 shadow-md shadow-amber-500/20"
+                >
+                  <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">Approve</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
         />
