@@ -1,0 +1,247 @@
+function FeedView({ user, token }) {
+  const [posts, setPosts] = useState([]);
+  const [postText, setPostText] = useState('');
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [activeCommentPostId, setActiveCommentPostId] = useState(null);
+  const [commentText, setCommentText] = useState('');
+
+  const fetchPosts = async () => {
+    try {
+      const res = await fetch(`${API_URL}/posts`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setPosts(await res.json());
+    } catch (err) {
+      console.error('Failed fetching posts:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchPosts();
+  }, []);
+
+  const handlePickImage = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permissionResult.granted) {
+      alert('Permission to access camera roll is required!');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+    });
+
+    if (!result.canceled) {
+      setSelectedImage(result.assets[0]);
+    }
+  };
+
+  const handleCreatePost = async () => {
+    if (!postText.trim() && !selectedImage) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('content', postText.trim());
+      formData.append('authorName', user.name);
+      formData.append('authorRole', user.role || 'member');
+      formData.append('category', 'General');
+
+      if (selectedImage) {
+        const uriParts = selectedImage.uri.split('.');
+        const fileType = uriParts[uriParts.length - 1];
+
+        formData.append('media', {
+          uri: selectedImage.uri,
+          name: `photo.${fileType}`,
+          type: `image/${fileType}`,
+        });
+      }
+
+      const res = await fetch(`${API_URL}/posts`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (res.ok) {
+        setPostText('');
+        setSelectedImage(null);
+        fetchPosts();
+      }
+    } catch (err) {
+      console.error('Failed creating post:', err);
+    }
+  };
+
+  const handleToggleLike = async (postId) => {
+    try {
+      const res = await fetch(`${API_URL}/posts/${postId}/like`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) fetchPosts();
+    } catch (err) {
+      console.error('Failed toggling like:', err);
+    }
+  };
+
+  const handleAddComment = async (postId) => {
+    if (!commentText.trim()) return;
+    try {
+      const res = await fetch(`${API_URL}/posts/${postId}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text: commentText.trim() }),
+      });
+      if (res.ok) {
+        setCommentText('');
+        fetchPosts();
+      }
+    } catch (err) {
+      console.error('Failed adding comment:', err);
+    }
+  };
+
+  return (
+    <View className="flex-1 p-4 bg-[#05070a]">
+      <FlatList
+        data={posts}
+        keyExtractor={(item) => item._id}
+        ListHeaderComponent={
+          <View className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-3xl mb-4 shadow-xl">
+            <TextInput
+              placeholder="Share a build update or project note..."
+              placeholderTextColor="#64748b"
+              multiline
+              value={postText}
+              onChangeText={setPostText}
+              className="text-white text-sm min-h-[70px] mb-3 font-medium"
+            />
+
+            {selectedImage && (
+              <View className="mb-3 relative">
+                <Image
+                  source={{ uri: selectedImage.uri }}
+                  className="w-full h-44 rounded-2xl"
+                  resizeMode="cover"
+                />
+                <TouchableOpacity
+                  onPress={() => setSelectedImage(null)}
+                  className="absolute top-3 right-3 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800"
+                >
+                  <Text className="text-rose-400 font-bold text-xs">Remove</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View className="flex-row justify-between items-center border-t border-slate-800/80 pt-3">
+              <TouchableOpacity
+                onPress={handlePickImage}
+                className="bg-slate-900 px-3.5 py-2 rounded-xl flex-row items-center gap-1.5 border border-slate-800"
+              >
+                <Text className="text-xs">📷</Text>
+                <Text className="text-slate-300 font-bold text-xs">Add Photo</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleCreatePost}
+                className="bg-amber-500 py-2.5 px-5 rounded-xl active:scale-95 shadow-md shadow-amber-500/20"
+              >
+                <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">Post</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        }
+        renderItem={({ item }) => {
+          const hasLiked = item.likes?.includes(user._id);
+          const serverBaseUrl = API_URL.replace('/api', '');
+
+          return (
+            <View className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-3xl mb-3 shadow-lg">
+              <View className="flex-row justify-between items-center mb-2.5">
+                <View className="flex-row items-center gap-2">
+                  <View className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 justify-center items-center">
+                    <Text className="text-xs font-bold text-amber-400">{item.authorName?.[0] || 'B'}</Text>
+                  </View>
+                  <View>
+                    <Text className="text-white font-bold text-sm">{item.authorName || 'Member'}</Text>
+                    <Text className="text-amber-500/80 text-[10px] uppercase font-semibold">{item.authorRole || 'builder'}</Text>
+                  </View>
+                </View>
+                <Text className="text-slate-500 text-[10px] font-medium">
+                  {new Date(item.createdAt).toLocaleDateString()}
+                </Text>
+              </View>
+
+              {item.content ? <Text className="text-slate-200 text-sm mb-3 font-normal leading-relaxed">{item.content}</Text> : null}
+
+              {item.mediaUrl && item.mediaType === 'image' && (
+                <Image
+                  source={{ uri: `${serverBaseUrl}${item.mediaUrl}` }}
+                  className="w-full h-56 rounded-2xl mb-3 border border-slate-800/60"
+                  resizeMode="cover"
+                />
+              )}
+
+              <View className="flex-row gap-5 border-t border-slate-800/80 pt-3 items-center">
+                <TouchableOpacity
+                  onPress={() => handleToggleLike(item._id)}
+                  className="flex-row items-center gap-1.5 bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800/50"
+                >
+                  <Text className="text-xs">{hasLiked ? '❤️' : '🤍'}</Text>
+                  <Text className="text-slate-300 text-xs font-bold">{item.likes?.length || 0}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() =>
+                    setActiveCommentPostId(activeCommentPostId === item._id ? null : item._id)
+                  }
+                  className="flex-row items-center gap-1.5 bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800/50"
+                >
+                  <Text className="text-xs">💬</Text>
+                  <Text className="text-slate-300 text-xs font-bold">
+                    {item.comments?.length || 0} Comments
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {activeCommentPostId === item._id && (
+                <View className="mt-3 pt-3 border-t border-slate-800/80">
+                  {item.comments?.map((c, idx) => (
+                    <View key={idx} className="bg-[#05070a] p-3 rounded-2xl mb-2 border border-slate-800/60">
+                      <Text className="text-amber-400 font-bold text-[11px] mb-0.5">{c.authorName}</Text>
+                      <Text className="text-slate-300 text-xs">{c.text}</Text>
+                    </View>
+                  ))}
+
+                  <View className="flex-row gap-2 mt-2">
+                    <TextInput
+                      placeholder="Write a comment..."
+                      placeholderTextColor="#64748b"
+                      value={commentText}
+                      onChangeText={setCommentText}
+                      className="flex-1 bg-[#05070a] text-white px-3.5 py-2 rounded-xl border border-slate-800 text-xs font-medium"
+                    />
+                    <TouchableOpacity
+                      onPress={() => handleAddComment(item._id)}
+                      className="bg-amber-500 px-4 py-2 rounded-xl justify-center shadow-md shadow-amber-500/20"
+                    >
+                      <Text className="text-slate-950 font-black text-[10px] uppercase">Reply</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+          );
+        }}
+      />
+    </View>
+  );
+}

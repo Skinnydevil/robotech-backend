@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './global.css';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
+  FlatList,
+  Modal,
   StatusBar,
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -14,12 +16,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
+import * as ImagePicker from 'expo-image-picker';
 
 import AdminView from './components/AdminView';
 import ChatView from './components/ChatView';
 import FeedView from './components/FeedView';
-import SideMenu from './components/SideMenu'; // 👈 1. Import SideMenu
 
+// ============================================================================
+// CONFIGURATION & ASSETS
+// ============================================================================
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api'; 
 const SOCKET_URL = 'https://robotech-backend-bc05.onrender.com';
 
@@ -29,6 +34,9 @@ const socket = io(SOCKET_URL, {
   autoConnect: false,
 });
 
+// ============================================================================
+// MAIN APPLICATION ROOT
+// ============================================================================
 export default function App() {
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
@@ -41,9 +49,8 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // App Navigation & Side Menu State
-  const [activeTab, setActiveTab] = useState('feed');
-  const [sideMenuOpen, setSideMenuOpen] = useState(false); // 👈 2. Side Menu Toggle State
+  // App Navigation State
+  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'chat' | 'admin'
 
   useEffect(() => {
     const checkToken = async () => {
@@ -200,27 +207,9 @@ export default function App() {
     <SafeAreaView style={{ flex: 1, backgroundColor: '#05070a' }} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="light-content" />
 
-      {/* Side Menu Component */}
-      <SideMenu
-        visible={sideMenuOpen}
-        onClose={() => setSideMenuOpen(false)}
-        user={user}
-        token={token}
-        API_URL={API_URL}
-        onLogout={handleLogout}
-      />
-
       {/* Global Header */}
       <View className="flex-row justify-between items-center px-5 py-3.5 border-b border-slate-800/80 bg-[#0b0f19] shadow-md">
         <View className="flex-row items-center gap-3">
-          {/* Hamburger Menu Trigger Button */}
-          <TouchableOpacity
-            onPress={() => setSideMenuOpen(true)}
-            className="bg-slate-900 border border-slate-800 p-2 rounded-xl active:scale-95"
-          >
-            <Text className="text-white font-bold text-lg">☰</Text>
-          </TouchableOpacity>
-
           <View className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 justify-center items-center overflow-hidden">
             <Image source={ClubLogo} className="w-6 h-6" resizeMode="contain" />
           </View>
@@ -231,7 +220,6 @@ export default function App() {
             </Text>
           </View>
         </View>
-
         <TouchableOpacity
           onPress={handleLogout}
           className="bg-slate-900 px-3.5 py-2 rounded-xl border border-slate-800"
@@ -240,7 +228,7 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Safe Screen Container */}
+      {/* Safe Screen Container (No outer KeyboardAvoidingView locking hits) */}
       <View style={{ flex: 1 }}>
         {activeTab === 'feed' && <FeedView user={user} token={token} />}
         {activeTab === 'chat' && <ChatView user={user} token={token} />}
@@ -290,3 +278,4 @@ export default function App() {
     </SafeAreaView>
   );
 }
+
