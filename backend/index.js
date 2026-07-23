@@ -59,7 +59,7 @@ const UserSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', UserSchema);
 
-// Authentication Middleware to secure likes, comments, and chats
+// Authentication Middleware to secure routes
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -271,6 +271,75 @@ app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
   }
 });
 
+// DELETE POST ROUTE (Author or Admin only)
+app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    const isAuthor = post.authorName === req.user.name || post.authorId?.toString() === req.user.id;
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({ error: 'Unauthorized to delete this post' });
+    }
+
+    await Post.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Post deleted successfully' });
+  } catch (error) {
+    console.error('Delete post error:', error);
+    res.status(500).json({ error: 'Failed to delete post' });
+  }
+});
+
+// ==========================================
+// USER PROFILE & PASSWORD UPDATE ROUTE
+// ==========================================
+app.put('/api/users/profile', authenticateToken, async (req, res) => {
+  try {
+    const { name, currentPassword, newPassword } = req.body;
+    
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (newPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'Current password is required to set a new password' });
+      }
+
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Incorrect current password' });
+      }
+
+      user.password = await bcrypt.hash(newPassword, 10);
+    }
+
+    if (name && name.trim()) {
+      user.name = name.trim();
+    }
+
+    await user.save();
+
+    res.json({ 
+      message: 'Profile updated successfully',
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error('Update profile error:', err);
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
 // ==========================================
 // CHAT & MESSAGING ROUTES
 // ==========================================
@@ -339,6 +408,82 @@ app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) =
 });
 
 // ==========================================
+// EVENT SCHEMA & ROUTES
+// ==========================================
+const eventSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: String,
+  date: { type: String, required: true }, // Saved as YYYY-MM-DD string
+  time: String,
+  location: String,
+  category: { type: String, enum: ['Competition', 'Build Session', 'Workshop', 'General'], default: 'General' },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  rsvps: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+}, { timestamps: true });
+
+const Event = mongoose.model('Event', eventSchema);
+
+// GET all events
+app.get('/api/events', authenticateToken, async (req, res) => {
+  try {
+    const events = await Event.find().sort({ date: 1 });
+    res.json(events);
+  } catch (err) {
+    console.error('Fetch events error:', err);
+    res.status(500).json({ error: 'Failed to fetch events' });
+  }
+});
+
+// POST create event (Requires Auth)
+app.post('/api/events', authenticateToken, async (req, res) => {
+  try {
+    const { title, description, date, time, location, category } = req.body;
+    if (!title || !date) {
+      return res.status(400).json({ error: 'Title and Date are required.' });
+    }
+
+    const newEvent = new Event({
+      title,
+      description,
+      date,
+      time,
+      location,
+      category,
+      createdBy: req.user.id,
+      rsvps: [req.user.id],
+    });
+
+    await newEvent.save();
+    res.status(201).json(newEvent);
+  } catch (err) {
+    console.error('Create event error:', err);
+    res.status(500).json({ error: 'Failed to create event on server' });
+  }
+});
+
+// PUT toggle RSVP
+app.put('/api/events/:id/rsvp', authenticateToken, async (req, res) => {
+  try {
+    const event = await Event.findById(req.params.id);
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+
+    const userId = req.user.id;
+    const hasRsvped = event.rsvps.includes(userId);
+
+    if (hasRsvped) {
+      event.rsvps = event.rsvps.filter((id) => id.toString() !== userId);
+    } else {
+      event.rsvps.push(userId);
+    }
+
+    await event.save();
+    res.json(event);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update RSVP' });
+  }
+});
+
+// ==========================================
 // SOCKET.IO ROOM MANAGEMENT
 // ==========================================
 io.on('connection', (socket) => {
@@ -377,77 +522,4 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend server listening on port ${PORT}`);
-});
-// ==========================================
-// USER PROFILE & PASSWORD UPDATE ROUTE
-// ==========================================
-app.put('/api/users/profile', authenticateToken, async (req, res) => {
-  try {
-    const { name, currentPassword, newPassword } = req.body;
-    
-    // Find the authenticated user
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // 1. If user wants to update their password
-    if (newPassword) {
-      if (!currentPassword) {
-        return res.status(400).json({ error: 'Current password is required to set a new password' });
-      }
-
-      // Verify current password against hashed password in MongoDB
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if (!isMatch) {
-        return res.status(400).json({ error: 'Incorrect current password' });
-      }
-
-      // Hash and update to the new password
-      user.password = await bcrypt.hash(newPassword, 10);
-    }
-
-    // 2. Update display name if provided
-    if (name && name.trim()) {
-      user.name = name.trim();
-    }
-
-    await user.save();
-
-    res.json({ 
-      message: 'Profile updated successfully',
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
-  } catch (err) {
-    console.error('Update profile error:', err);
-    res.status(500).json({ error: 'Failed to update profile' });
-  }
-});
-// DELETE POST ROUTE (Author or Admin only)
-app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
-    }
-
-    // Check if the user is the post author OR an admin
-    const isAuthor = post.authorName === req.user.name || post.authorId?.toString() === req.user.id;
-    const isAdmin = req.user.role === 'admin';
-
-    if (!isAuthor && !isAdmin) {
-      return res.status(403).json({ error: 'Unauthorized to delete this post' });
-    }
-
-    await Post.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Post deleted successfully' });
-  } catch (error) {
-    console.error('Delete post error:', error);
-    res.status(500).json({ error: 'Failed to delete post' });
-  }
 });

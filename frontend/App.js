@@ -1,3 +1,4 @@
+import './global.css';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -11,26 +12,26 @@ import {
   Image,
   ScrollView,
   Animated,
+  Keyboard,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
-import { Menu, Settings, LayoutGrid, MessageSquare, ShieldAlert, Lock, User, CheckCircle2 } from 'lucide-react-native';
+import { Menu, Settings, LayoutGrid, MessageSquare, ShieldAlert, Lock, User, CheckCircle2, Calendar as CalendarIcon } from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
 import ChatView from './components/ChatView';
 import FeedView from './components/FeedView';
+import CalendarView from './components/CalendarView';
 import SideMenu from './components/SideMenu';
-
-import './global.css';
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api'; 
 const SOCKET_URL = 'https://robotech-backend-bc05.onrender.com';
 const ClubLogo = require('./assets/logo.png');
 
-const socket = io(SOCKET_URL, { autoConnect: false });
+function MainAppContent() {
+  const insets = useSafeAreaInsets();
 
-export default function App() {
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -52,24 +53,25 @@ export default function App() {
   const [newPassword, setNewPassword] = useState('');
   const [settingsMsg, setSettingsMsg] = useState({ type: '', text: '' });
 
-  // Screen Fade Anim
+  const socketRef = useRef(null);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
-  const animateTabChange = (newTab) => {
-    Animated.sequence([
-      Animated.timing(fadeAnim, {
-        toValue: 0.3,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-    ]).start();
-    setActiveTab(newTab);
-  };
+  // Immediate State-Switch Navigation (Eliminates Double-Tap Bug)
+  // Smooth, Instant Tab Switch (Fixes Screen Dimming / Darkening Issue)
+const changeTab = (newTab) => {
+  if (newTab === activeTab) return;
+  
+  // 1. Immediately update active tab so UI responds without lag
+  setActiveTab(newTab);
+  
+  // 2. Gentle fade effect starting from 85% opacity (no harsh darkening)
+  fadeAnim.setValue(0.85);
+  Animated.timing(fadeAnim, {
+    toValue: 1,
+    duration: 150,
+    useNativeDriver: true,
+  }).start();
+};
 
   useEffect(() => {
     const checkToken = async () => {
@@ -91,8 +93,33 @@ export default function App() {
     checkToken();
   }, []);
 
+  useEffect(() => {
+    if (token) {
+      socketRef.current = io(SOCKET_URL, {
+        autoConnect: true,
+        auth: { token },
+      });
+    }
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
+  }, [token]);
+
   const handleAuth = async () => {
+    Keyboard.dismiss();
     setAuthError('');
+    if (!email.trim() || !password) {
+      setAuthError('Please fill in all required fields.');
+      return;
+    }
+    if (!isLogin && !name.trim()) {
+      setAuthError('Please enter your full name.');
+      return;
+    }
+
     const endpoint = isLogin ? '/auth/login' : '/auth/register';
     const payload = isLogin 
       ? { email: email.trim(), password } 
@@ -122,14 +149,15 @@ export default function App() {
         setName('');
         setEmail('');
         setPassword('');
-        setAuthError('Registration pending admin approval!');
+        setAuthError('Registration submitted! Awaiting admin approval.');
       }
     } catch (err) {
-      setAuthError('Network connection error.');
+      setAuthError('Network connection error. Check your backend status.');
     }
   };
 
   const handleUpdateProfile = async () => {
+    Keyboard.dismiss();
     setSettingsMsg({ type: '', text: '' });
     try {
       const res = await fetch(`${API_URL}/users/profile`, {
@@ -163,17 +191,24 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await AsyncStorage.clear();
-    socket.disconnect();
-    setToken(null);
-    setUser(null);
-    setActiveTab('feed');
-    setSideMenuOpen(false);
+    try {
+      await AsyncStorage.multiRemove(['userToken', 'userData']);
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    } catch (e) {
+      console.error('Error during logout:', e);
+    } finally {
+      setToken(null);
+      setUser(null);
+      setActiveTab('feed');
+      setSideMenuOpen(false);
+    }
   };
 
   if (loading) {
     return (
-      <View className="flex-1 bg-[#030712] justify-center items-center">
+      <View className="flex-1 bg-slate-950 justify-center items-center">
         <ActivityIndicator size="large" color="#f59e0b" />
       </View>
     );
@@ -182,10 +217,10 @@ export default function App() {
   const isAdmin = user?.role === 'admin';
 
   return (
-    <SafeAreaProvider>
+    <View className="flex-1 bg-slate-950">
       {!token ? (
         /* --- AUTHENTICATION SCREEN --- */
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#030712' }}>
+        <SafeAreaView className="flex-1 bg-slate-950">
           <StatusBar barStyle="light-content" />
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -194,14 +229,14 @@ export default function App() {
             <ScrollView 
               contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
               keyboardShouldPersistTaps="handled"
-              className="p-6 bg-[#030712]"
+              className="p-6 bg-slate-950"
             >
-              <View className="bg-[#0a0f1d] p-7 rounded-3xl border border-amber-500/20 shadow-2xl">
+              <View className="bg-slate-900 p-7 rounded-3xl border border-amber-500/20 shadow-lg shadow-amber-500/10">
                 <View className="items-center mb-6">
                   <View className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 justify-center items-center mb-3 overflow-hidden">
                     <Image source={ClubLogo} className="w-10 h-10" resizeMode="contain" />
                   </View>
-                  <Text className="text-amber-400 font-black text-3xl tracking-widest">ROBOTECH</Text>
+                  <Text className="text-amber-500 font-black text-3xl tracking-widest">ROBOTECH</Text>
                   <Text className="text-slate-400 text-xs mt-1 font-medium">
                     {isLogin ? 'Engineering Network Access' : 'Create Builder Account'}
                   </Text>
@@ -219,7 +254,8 @@ export default function App() {
                     placeholderTextColor="#475569"
                     value={name}
                     onChangeText={setName}
-                    className="bg-[#030712] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
+                    autoCorrect={false}
+                    className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
                   />
                 )}
 
@@ -228,9 +264,10 @@ export default function App() {
                   placeholderTextColor="#475569"
                   keyboardType="email-address"
                   autoCapitalize="none"
+                  autoCorrect={false}
                   value={email}
                   onChangeText={setEmail}
-                  className="bg-[#030712] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
+                  className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
                 />
 
                 <TextInput
@@ -239,12 +276,13 @@ export default function App() {
                   secureTextEntry
                   value={password}
                   onChangeText={setPassword}
-                  className="bg-[#030712] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-5 font-medium"
+                  className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-5 font-medium"
                 />
 
                 <TouchableOpacity
                   onPress={handleAuth}
-                  className="bg-amber-500 py-4 rounded-xl justify-center items-center active:opacity-80 shadow-lg shadow-amber-500/25 mb-5"
+                  activeOpacity={0.8}
+                  className="bg-amber-500 py-4 rounded-xl items-center mb-5 shadow-md shadow-amber-500/20"
                 >
                   <Text className="text-slate-950 font-black text-xs uppercase tracking-widest">
                     {isLogin ? 'Sign In' : 'Register Account'}
@@ -254,7 +292,7 @@ export default function App() {
                 <TouchableOpacity onPress={() => setIsLogin(!isLogin)} className="py-1">
                   <Text className="text-slate-400 text-xs text-center">
                     {isLogin ? "Don't have an account? " : 'Already registered? '}
-                    <Text className="text-amber-400 font-bold">{isLogin ? 'Sign Up' : 'Log In'}</Text>
+                    <Text className="text-amber-500 font-bold">{isLogin ? 'Sign Up' : 'Log In'}</Text>
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -263,15 +301,15 @@ export default function App() {
         </SafeAreaView>
       ) : (
         /* --- MAIN APP INTERFACE --- */
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#030712' }} edges={['top', 'left', 'right']}>
+        <SafeAreaView className="flex-1 bg-slate-950" edges={['top', 'left', 'right']}>
           <StatusBar barStyle="light-content" />
 
-          {/* Dynamic Top Header */}
-          <View className="flex-row justify-between items-center px-5 py-3.5 border-b border-slate-800/80 bg-[#0a0f1d]">
+          {/* Top Header */}
+          <View className="flex-row justify-between items-center px-5 py-3.5 border-b border-slate-800/80 bg-slate-900">
             <View className="flex-row items-center gap-3">
               <TouchableOpacity
                 onPress={() => setSideMenuOpen(true)}
-                className="bg-[#030712] border border-amber-500/30 p-2.5 rounded-xl active:scale-95"
+                className="bg-slate-950 border border-amber-500/30 p-2.5 rounded-xl"
               >
                 <Menu size={18} color="#f59e0b" />
               </TouchableOpacity>
@@ -280,7 +318,7 @@ export default function App() {
                 <Image source={ClubLogo} className="w-6 h-6" resizeMode="contain" />
               </View>
               <View>
-                <Text className="text-amber-400 font-black text-base tracking-widest">ROBOTECH</Text>
+                <Text className="text-amber-500 font-black text-base tracking-wider">ROBOTECH</Text>
                 <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
                   {user?.name} • <Text className="text-amber-500">{user?.role || 'Member'}</Text>
                 </Text>
@@ -288,28 +326,34 @@ export default function App() {
             </View>
 
             <TouchableOpacity
-              onPress={() => animateTabChange('settings')}
-              className={`p-2.5 rounded-xl border active:scale-95 ${
+              onPress={() => changeTab('settings')}
+              className={`bg-slate-950 border p-2.5 rounded-xl ${
                 activeTab === 'settings' 
                   ? 'bg-amber-500/20 border-amber-500/60' 
-                  : 'bg-[#030712] border-slate-800'
+                  : 'border-amber-500/30'
               }`}
             >
               <Settings size={18} color={activeTab === 'settings' ? '#f59e0b' : '#94a3b8'} />
             </TouchableOpacity>
           </View>
 
-          {/* Animated Tab Content Container */}
-          <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+          {/* Animated Tab Content */}
+          <Animated.View className="flex-1" style={{ opacity: fadeAnim }}>
             {activeTab === 'feed' && <FeedView user={user} token={token} />}
 
-            {activeTab === 'chat' && <ChatView user={user} token={token} socket={socket} />}
+            {activeTab === 'chat' && (
+              <ChatView user={user} token={token} socket={socketRef.current} />
+            )}
+
+            {activeTab === 'calendar' && (
+              <CalendarView user={user} token={token} />
+            )}
 
             {activeTab === 'admin' && isAdmin && <AdminView token={token} />}
 
             {activeTab === 'settings' && (
               <ScrollView className="flex-1 p-5" keyboardShouldPersistTaps="handled">
-                <Text className="text-amber-400 font-black text-xl mb-1 tracking-wider">ACCOUNT SETTINGS</Text>
+                <Text className="text-amber-500 font-black text-xl mb-1 tracking-wider">ACCOUNT SETTINGS</Text>
                 <Text className="text-slate-400 text-xs mb-6">Manage profile details and security</Text>
 
                 {settingsMsg.text ? (
@@ -327,8 +371,7 @@ export default function App() {
                   </View>
                 ) : null}
 
-                {/* Profile Section */}
-                <View className="bg-[#0a0f1d] p-5 rounded-2xl border border-slate-800 mb-5">
+                <View className="bg-slate-900 p-5 rounded-2xl border border-slate-800 mb-5">
                   <View className="flex-row items-center gap-2 mb-4">
                     <User size={16} color="#f59e0b" />
                     <Text className="text-slate-200 font-bold text-xs uppercase tracking-wider">Profile Information</Text>
@@ -340,19 +383,18 @@ export default function App() {
                     onChangeText={setUpdateName}
                     placeholder="Full Name"
                     placeholderTextColor="#475569"
-                    className="bg-[#030712] text-white px-4 py-3 rounded-xl border border-slate-800 text-sm mb-4"
+                    className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
                   />
 
                   <Text className="text-slate-400 text-xs mb-1.5 font-medium">Email Address</Text>
                   <TextInput
                     value={user?.email}
                     editable={false}
-                    className="bg-[#030712]/50 text-slate-500 px-4 py-3 rounded-xl border border-slate-900 text-sm mb-2"
+                    className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-2"
                   />
                 </View>
 
-                {/* Security Section */}
-                <View className="bg-[#0a0f1d] p-5 rounded-2xl border border-slate-800 mb-6">
+                <View className="bg-slate-900 p-5 rounded-2xl border border-slate-800 mb-5">
                   <View className="flex-row items-center gap-2 mb-4">
                     <Lock size={16} color="#f59e0b" />
                     <Text className="text-slate-200 font-bold text-xs uppercase tracking-wider">Security & Credentials</Text>
@@ -365,7 +407,7 @@ export default function App() {
                     secureTextEntry
                     placeholder="Enter current password"
                     placeholderTextColor="#475569"
-                    className="bg-[#030712] text-white px-4 py-3 rounded-xl border border-slate-800 text-sm mb-4"
+                    className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
                   />
 
                   <Text className="text-slate-400 text-xs mb-1.5 font-medium">New Password (Optional)</Text>
@@ -375,76 +417,117 @@ export default function App() {
                     secureTextEntry
                     placeholder="Leave empty to keep current password"
                     placeholderTextColor="#475569"
-                    className="bg-[#030712] text-white px-4 py-3 rounded-xl border border-slate-800 text-sm"
+                    className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm font-medium"
                   />
                 </View>
 
                 <TouchableOpacity
                   onPress={handleUpdateProfile}
-                  className="bg-amber-500 py-4 rounded-xl justify-center items-center active:opacity-80 shadow-lg shadow-amber-500/20 mb-10"
+                  activeOpacity={0.8}
+                  className="bg-amber-500 py-4 rounded-xl items-center mb-10 shadow-md shadow-amber-500/20"
                 >
-                  <Text className="text-slate-950 font-black text-xs uppercase tracking-widest">
-                    Save Changes
-                  </Text>
+                  <Text className="text-slate-950 font-black text-xs uppercase tracking-widest">Save Changes</Text>
                 </TouchableOpacity>
               </ScrollView>
             )}
           </Animated.View>
 
-          {/* Bottom Floating Navigation Bar */}
-          <View className="flex-row border-t border-slate-800/80 bg-[#0a0f1d] px-4 py-3 gap-2">
+          {/* Bottom Bar */}
+          <View 
+            className="flex-row border-t border-slate-800/80 bg-slate-900 px-3 pt-3 gap-1.5"
+            style={{ paddingBottom: Math.max(insets.bottom, 12) }}
+          >
             <TouchableOpacity
-              onPress={() => animateTabChange('feed')}
-              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-2 active:scale-95 ${
-                activeTab === 'feed' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
+              onPress={() => changeTab('feed')}
+              activeOpacity={0.6}
+              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
+                activeTab === 'feed' 
+                  ? 'bg-amber-500/15 border border-amber-500/40' 
+                  : 'bg-transparent'
               }`}
             >
-              <LayoutGrid size={16} color={activeTab === 'feed' ? '#f59e0b' : '#64748b'} />
-              <Text className={`font-bold text-xs tracking-wider ${activeTab === 'feed' ? 'text-amber-400' : 'text-slate-400'}`}>
+              <LayoutGrid size={15} color={activeTab === 'feed' ? '#f59e0b' : '#64748b'} />
+              <Text className={`font-bold text-[11px] tracking-wide ${
+                activeTab === 'feed' ? 'text-amber-500' : 'text-slate-400'
+              }`}>
                 Feed
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => animateTabChange('chat')}
-              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-2 active:scale-95 ${
-                activeTab === 'chat' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
+              onPress={() => changeTab('chat')}
+              activeOpacity={0.6}
+              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
+                activeTab === 'chat' 
+                  ? 'bg-amber-500/15 border border-amber-500/40' 
+                  : 'bg-transparent'
               }`}
             >
-              <MessageSquare size={16} color={activeTab === 'chat' ? '#f59e0b' : '#64748b'} />
-              <Text className={`font-bold text-xs tracking-wider ${activeTab === 'chat' ? 'text-amber-400' : 'text-slate-400'}`}>
+              <MessageSquare size={15} color={activeTab === 'chat' ? '#f59e0b' : '#64748b'} />
+              <Text className={`font-bold text-[11px] tracking-wide ${
+                activeTab === 'chat' ? 'text-amber-500' : 'text-slate-400'
+              }`}>
                 Chat
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => changeTab('calendar')}
+              activeOpacity={0.6}
+              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
+                activeTab === 'calendar' 
+                  ? 'bg-amber-500/15 border border-amber-500/40' 
+                  : 'bg-transparent'
+              }`}
+            >
+              <CalendarIcon size={15} color={activeTab === 'calendar' ? '#f59e0b' : '#64748b'} />
+              <Text className={`font-bold text-[11px] tracking-wide ${
+                activeTab === 'calendar' ? 'text-amber-500' : 'text-slate-400'
+              }`}>
+                Events
               </Text>
             </TouchableOpacity>
 
             {isAdmin && (
               <TouchableOpacity
-                onPress={() => animateTabChange('admin')}
-                className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-2 active:scale-95 ${
-                  activeTab === 'admin' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
+                onPress={() => changeTab('admin')}
+                activeOpacity={0.6}
+                className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
+                  activeTab === 'admin' 
+                    ? 'bg-amber-500/15 border border-amber-500/40' 
+                    : 'bg-transparent'
                 }`}
               >
-                <ShieldAlert size={16} color={activeTab === 'admin' ? '#f59e0b' : '#64748b'} />
-                <Text className={`font-bold text-xs tracking-wider ${activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'}`}>
+                <ShieldAlert size={15} color={activeTab === 'admin' ? '#f59e0b' : '#64748b'} />
+                <Text className={`font-bold text-[11px] tracking-wide ${
+                  activeTab === 'admin' ? 'text-amber-500' : 'text-slate-400'
+                }`}>
                   Admin
                 </Text>
               </TouchableOpacity>
             )}
           </View>
 
-          {/* Side Drawer Component placed at bottom to guarantee highest z-index overlay */}
           <SideMenu
             visible={sideMenuOpen}
             onClose={() => setSideMenuOpen(false)}
             user={user}
             onLogout={handleLogout}
             onSelectTab={(tab) => {
-              animateTabChange(tab);
+              changeTab(tab);
               setSideMenuOpen(false);
             }}
           />
         </SafeAreaView>
       )}
+    </View>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <MainAppContent />
     </SafeAreaProvider>
   );
 }
