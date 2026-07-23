@@ -21,8 +21,8 @@ import * as ImagePicker from 'expo-image-picker';
 // ============================================================================
 // CONFIGURATION & ASSETS
 // ============================================================================
-const API_URL = 'http://10.96.66.230:5000/api'; 
-const SOCKET_URL = 'http://10.96.66.230:5000';
+const API_URL = 'https://robotech-backend-bc05.onrender.com/api'; 
+const SOCKET_URL = 'https://robotech-backend-bc05.onrender.com';
 
 const ClubLogo = require('./assets/logo.png');
 
