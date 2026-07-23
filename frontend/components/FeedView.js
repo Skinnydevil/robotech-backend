@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   View,
   Text,
@@ -93,6 +92,39 @@ export default function FeedView({ user, token }) {
     } catch (err) {
       console.error('Failed creating post:', err);
     }
+  };
+
+  const handleDeletePost = (postId) => {
+    Alert.alert(
+      'Delete Post',
+      'Are you sure you want to delete this post?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await fetch(`${API_URL}/posts/${postId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` },
+              });
+
+              if (res.ok) {
+                // Optimistically remove from state
+                setPosts((prev) => prev.filter((p) => p._id !== postId));
+              } else {
+                const data = await res.json();
+                Alert.alert('Error', data.error || 'Failed to delete post');
+              }
+            } catch (err) {
+              console.error('Failed deleting post:', err);
+              Alert.alert('Error', 'Unable to connect to server');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleToggleLike = async (postId) => {
@@ -206,11 +238,17 @@ export default function FeedView({ user, token }) {
           </View>
         }
         renderItem={({ item }) => {
-          const hasLiked = item.likes?.includes(user._id);
+          const hasLiked = item.likes?.includes(user?._id);
           const fullMediaUrl = resolveImageUrl(item.mediaUrl);
+          
+          // Check ownership or admin status
+          const isAuthor = item.authorName === user?.name || item.authorId === user?._id;
+          const isAdmin = user?.role === 'admin';
+          const canDelete = isAuthor || isAdmin;
 
           return (
             <View className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-3xl mb-3 shadow-lg">
+              {/* Header */}
               <View className="flex-row justify-between items-center mb-2.5">
                 <View className="flex-row items-center gap-2">
                   <View className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 justify-center items-center">
@@ -225,17 +263,32 @@ export default function FeedView({ user, token }) {
                     </Text>
                   </View>
                 </View>
-                <Text className="text-slate-500 text-[10px] font-medium">
-                  {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'Recently'}
-                </Text>
+
+                <View className="flex-row items-center gap-2">
+                  <Text className="text-slate-500 text-[10px] font-medium">
+                    {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'Recently'}
+                  </Text>
+
+                  {/* Conditional Delete Button */}
+                  {canDelete && (
+                    <TouchableOpacity
+                      onPress={() => handleDeletePost(item._id)}
+                      className="bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg active:scale-95"
+                    >
+                      <Text className="text-rose-400 text-[11px] font-bold">🗑️</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
 
+              {/* Content */}
               {item.content ? (
                 <Text className="text-slate-200 text-sm mb-3 font-normal leading-relaxed">
                   {item.content}
                 </Text>
               ) : null}
 
+              {/* Media Image */}
               {fullMediaUrl && (
                 <Image
                   source={{ uri: fullMediaUrl }}
@@ -244,6 +297,7 @@ export default function FeedView({ user, token }) {
                 />
               )}
 
+              {/* Actions */}
               <View className="flex-row gap-5 border-t border-slate-800/80 pt-3 items-center">
                 <TouchableOpacity
                   onPress={() => handleToggleLike(item._id)}
@@ -271,6 +325,7 @@ export default function FeedView({ user, token }) {
                 </TouchableOpacity>
               </View>
 
+              {/* Comments Accordion */}
               {activeCommentPostId === item._id && (
                 <View className="mt-3 pt-3 border-t border-slate-800/80">
                   {item.comments?.map((c, idx) => (

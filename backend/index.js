@@ -428,3 +428,26 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
+// DELETE POST ROUTE (Author or Admin only)
+app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    // Check if the user is the post author OR an admin
+    const isAuthor = post.authorName === req.user.name || post.authorId?.toString() === req.user.id;
+    const isAdmin = req.user.role === 'admin';
+
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({ error: 'Unauthorized to delete this post' });
+    }
+
+    await Post.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Post deleted successfully' });
+  } catch (error) {
+    console.error('Delete post error:', error);
+    res.status(500).json({ error: 'Failed to delete post' });
+  }
+});
