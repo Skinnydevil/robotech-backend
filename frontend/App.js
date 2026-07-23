@@ -1,5 +1,4 @@
-import React, { useState, useEffect } from 'react';
-import './global.css';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,40 +9,67 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  ScrollView,
+  Animated,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
+import { Menu, Settings, LayoutGrid, MessageSquare, ShieldAlert, Lock, User, CheckCircle2 } from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
 import ChatView from './components/ChatView';
 import FeedView from './components/FeedView';
-import SideMenu from './components/SideMenu'; // 👈 1. Import SideMenu
+import SideMenu from './components/SideMenu';
+
+import './global.css';
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api'; 
 const SOCKET_URL = 'https://robotech-backend-bc05.onrender.com';
-
 const ClubLogo = require('./assets/logo.png');
 
-const socket = io(SOCKET_URL, {
-  autoConnect: false,
-});
+const socket = io(SOCKET_URL, { autoConnect: false });
 
 export default function App() {
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Auth Form State
+  // Auth State
   const [isLogin, setIsLogin] = useState(true);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // App Navigation & Side Menu State
+  // App Navigation & Drawer
   const [activeTab, setActiveTab] = useState('feed');
-  const [sideMenuOpen, setSideMenuOpen] = useState(false); // 👈 2. Side Menu Toggle State
+  const [sideMenuOpen, setSideMenuOpen] = useState(false);
+
+  // Profile Settings State
+  const [updateName, setUpdateName] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [settingsMsg, setSettingsMsg] = useState({ type: '', text: '' });
+
+  // Screen Fade Anim
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+
+  const animateTabChange = (newTab) => {
+    Animated.sequence([
+      Animated.timing(fadeAnim, {
+        toValue: 0.3,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    setActiveTab(newTab);
+  };
 
   useEffect(() => {
     const checkToken = async () => {
@@ -51,8 +77,10 @@ export default function App() {
         const storedToken = await AsyncStorage.getItem('userToken');
         const storedUser = await AsyncStorage.getItem('userData');
         if (storedToken && storedUser) {
+          const parsedUser = JSON.parse(storedUser);
           setToken(storedToken);
-          setUser(JSON.parse(storedUser));
+          setUser(parsedUser);
+          setUpdateName(parsedUser.name || '');
         }
       } catch (err) {
         console.error('Failed to load session:', err);
@@ -66,7 +94,6 @@ export default function App() {
   const handleAuth = async () => {
     setAuthError('');
     const endpoint = isLogin ? '/auth/login' : '/auth/register';
-    
     const payload = isLogin 
       ? { email: email.trim(), password } 
       : { name: name.trim(), email: email.trim(), password };
@@ -77,7 +104,6 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      
       const data = await res.json();
 
       if (!res.ok) {
@@ -90,6 +116,7 @@ export default function App() {
         await AsyncStorage.setItem('userData', JSON.stringify(data.user));
         setToken(data.token);
         setUser(data.user);
+        setUpdateName(data.user.name || '');
       } else {
         setIsLogin(true);
         setName('');
@@ -98,8 +125,40 @@ export default function App() {
         setAuthError('Registration pending admin approval!');
       }
     } catch (err) {
-      console.error('Network catch error:', err);
-      setAuthError('Network error connecting to backend. Check your IP/port.');
+      setAuthError('Network connection error.');
+    }
+  };
+
+  const handleUpdateProfile = async () => {
+    setSettingsMsg({ type: '', text: '' });
+    try {
+      const res = await fetch(`${API_URL}/users/profile`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify({ 
+          name: updateName, 
+          currentPassword, 
+          newPassword: newPassword || undefined 
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setSettingsMsg({ type: 'error', text: data.error || 'Update failed' });
+        return;
+      }
+
+      const updatedUser = { ...user, name: updateName };
+      setUser(updatedUser);
+      await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
+      setCurrentPassword('');
+      setNewPassword('');
+      setSettingsMsg({ type: 'success', text: 'Profile updated successfully!' });
+    } catch (err) {
+      setSettingsMsg({ type: 'error', text: 'Failed to update profile.' });
     }
   };
 
@@ -109,184 +168,283 @@ export default function App() {
     setToken(null);
     setUser(null);
     setActiveTab('feed');
+    setSideMenuOpen(false);
   };
 
   if (loading) {
     return (
-      <View className="flex-1 bg-[#05070a] justify-center items-center">
+      <View className="flex-1 bg-[#030712] justify-center items-center">
         <ActivityIndicator size="large" color="#f59e0b" />
       </View>
     );
   }
 
-  // --- AUTHENTICATION SCREEN ---
-  if (!token) {
-    return (
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        className="flex-1 bg-[#05070a] justify-center p-6"
-      >
-        <StatusBar barStyle="light-content" />
-        <View className="bg-[#0b0f19] p-7 rounded-3xl border border-slate-800/80 shadow-2xl">
-          <View className="items-center mb-6">
-            <View className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 justify-center items-center mb-3 overflow-hidden shadow-lg shadow-amber-500/10">
-              <Image source={ClubLogo} className="w-10 h-10" resizeMode="contain" />
-            </View>
-            <Text className="text-amber-400 font-extrabold text-3xl tracking-tight">ROBOTECH</Text>
-            <Text className="text-slate-400 text-xs mt-1">
-              {isLogin ? 'Welcome back, builder!' : 'Join the elite engineering network'}
-            </Text>
-          </View>
-
-          {authError ? (
-            <View className="bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl mb-4">
-              <Text className="text-rose-400 text-xs text-center font-medium">{authError}</Text>
-            </View>
-          ) : null}
-
-          {!isLogin && (
-            <TextInput
-              placeholder="Full Name"
-              placeholderTextColor="#64748b"
-              value={name}
-              onChangeText={setName}
-              className="bg-[#05070a] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
-            />
-          )}
-
-          <TextInput
-            placeholder="Email Address"
-            placeholderTextColor="#64748b"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            value={email}
-            onChangeText={setEmail}
-            className="bg-[#05070a] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
-          />
-
-          <TextInput
-            placeholder="Password"
-            placeholderTextColor="#64748b"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            className="bg-[#05070a] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-5 font-medium"
-          />
-
-          <TouchableOpacity
-            onPress={handleAuth}
-            className="bg-amber-500 py-4 rounded-xl justify-center items-center active:scale-[0.98] shadow-lg shadow-amber-500/20 mb-5"
-          >
-            <Text className="text-slate-950 font-black text-xs uppercase tracking-widest">
-              {isLogin ? 'Sign In' : 'Register Account'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setIsLogin(!isLogin)} className="py-1">
-            <Text className="text-slate-400 text-xs text-center">
-              {isLogin ? "Don't have an account? " : 'Already registered? '}
-              <Text className="text-amber-400 font-bold">{isLogin ? 'Sign Up' : 'Log In'}</Text>
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  }
-
-  // --- MAIN AUTHENTICATED APP ---
   const isAdmin = user?.role === 'admin';
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#05070a' }} edges={['top', 'left', 'right']}>
-      <StatusBar barStyle="light-content" />
-
-      {/* Side Menu Component */}
-      <SideMenu
-        visible={sideMenuOpen}
-        onClose={() => setSideMenuOpen(false)}
-        user={user}
-        token={token}
-        API_URL={API_URL}
-        onLogout={handleLogout}
-      />
-
-      {/* Global Header */}
-      <View className="flex-row justify-between items-center px-5 py-3.5 border-b border-slate-800/80 bg-[#0b0f19] shadow-md">
-        <View className="flex-row items-center gap-3">
-          {/* Hamburger Menu Trigger Button */}
-          <TouchableOpacity
-            onPress={() => setSideMenuOpen(true)}
-            className="bg-slate-900 border border-slate-800 p-2 rounded-xl active:scale-95"
+    <SafeAreaProvider>
+      {!token ? (
+        /* --- AUTHENTICATION SCREEN --- */
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#030712' }}>
+          <StatusBar barStyle="light-content" />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            className="flex-1"
           >
-            <Text className="text-white font-bold text-lg">☰</Text>
-          </TouchableOpacity>
+            <ScrollView 
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              keyboardShouldPersistTaps="handled"
+              className="p-6 bg-[#030712]"
+            >
+              <View className="bg-[#0a0f1d] p-7 rounded-3xl border border-amber-500/20 shadow-2xl">
+                <View className="items-center mb-6">
+                  <View className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 justify-center items-center mb-3 overflow-hidden">
+                    <Image source={ClubLogo} className="w-10 h-10" resizeMode="contain" />
+                  </View>
+                  <Text className="text-amber-400 font-black text-3xl tracking-widest">ROBOTECH</Text>
+                  <Text className="text-slate-400 text-xs mt-1 font-medium">
+                    {isLogin ? 'Engineering Network Access' : 'Create Builder Account'}
+                  </Text>
+                </View>
 
-          <View className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 justify-center items-center overflow-hidden">
-            <Image source={ClubLogo} className="w-6 h-6" resizeMode="contain" />
+                {authError ? (
+                  <View className="bg-rose-500/10 border border-rose-500/30 p-3 rounded-xl mb-4">
+                    <Text className="text-rose-400 text-xs text-center font-medium">{authError}</Text>
+                  </View>
+                ) : null}
+
+                {!isLogin && (
+                  <TextInput
+                    placeholder="Full Name"
+                    placeholderTextColor="#475569"
+                    value={name}
+                    onChangeText={setName}
+                    className="bg-[#030712] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
+                  />
+                )}
+
+                <TextInput
+                  placeholder="Email Address"
+                  placeholderTextColor="#475569"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={email}
+                  onChangeText={setEmail}
+                  className="bg-[#030712] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
+                />
+
+                <TextInput
+                  placeholder="Password"
+                  placeholderTextColor="#475569"
+                  secureTextEntry
+                  value={password}
+                  onChangeText={setPassword}
+                  className="bg-[#030712] text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-5 font-medium"
+                />
+
+                <TouchableOpacity
+                  onPress={handleAuth}
+                  className="bg-amber-500 py-4 rounded-xl justify-center items-center active:opacity-80 shadow-lg shadow-amber-500/25 mb-5"
+                >
+                  <Text className="text-slate-950 font-black text-xs uppercase tracking-widest">
+                    {isLogin ? 'Sign In' : 'Register Account'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => setIsLogin(!isLogin)} className="py-1">
+                  <Text className="text-slate-400 text-xs text-center">
+                    {isLogin ? "Don't have an account? " : 'Already registered? '}
+                    <Text className="text-amber-400 font-bold">{isLogin ? 'Sign Up' : 'Log In'}</Text>
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      ) : (
+        /* --- MAIN APP INTERFACE --- */
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#030712' }} edges={['top', 'left', 'right']}>
+          <StatusBar barStyle="light-content" />
+
+          {/* Dynamic Top Header */}
+          <View className="flex-row justify-between items-center px-5 py-3.5 border-b border-slate-800/80 bg-[#0a0f1d]">
+            <View className="flex-row items-center gap-3">
+              <TouchableOpacity
+                onPress={() => setSideMenuOpen(true)}
+                className="bg-[#030712] border border-amber-500/30 p-2.5 rounded-xl active:scale-95"
+              >
+                <Menu size={18} color="#f59e0b" />
+              </TouchableOpacity>
+
+              <View className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 justify-center items-center overflow-hidden">
+                <Image source={ClubLogo} className="w-6 h-6" resizeMode="contain" />
+              </View>
+              <View>
+                <Text className="text-amber-400 font-black text-base tracking-widest">ROBOTECH</Text>
+                <Text className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                  {user?.name} • <Text className="text-amber-500">{user?.role || 'Member'}</Text>
+                </Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => animateTabChange('settings')}
+              className={`p-2.5 rounded-xl border active:scale-95 ${
+                activeTab === 'settings' 
+                  ? 'bg-amber-500/20 border-amber-500/60' 
+                  : 'bg-[#030712] border-slate-800'
+              }`}
+            >
+              <Settings size={18} color={activeTab === 'settings' ? '#f59e0b' : '#94a3b8'} />
+            </TouchableOpacity>
           </View>
-          <View>
-            <Text className="text-amber-400 font-black text-lg tracking-wider">ROBOTECH</Text>
-            <Text className="text-slate-400 text-[10px] font-medium">
-              {user?.name} • <Text className="text-amber-500/80 uppercase">{user?.role || 'Member'}</Text>
-            </Text>
+
+          {/* Animated Tab Content Container */}
+          <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+            {activeTab === 'feed' && <FeedView user={user} token={token} />}
+
+            {activeTab === 'chat' && <ChatView user={user} token={token} socket={socket} />}
+
+            {activeTab === 'admin' && isAdmin && <AdminView token={token} />}
+
+            {activeTab === 'settings' && (
+              <ScrollView className="flex-1 p-5" keyboardShouldPersistTaps="handled">
+                <Text className="text-amber-400 font-black text-xl mb-1 tracking-wider">ACCOUNT SETTINGS</Text>
+                <Text className="text-slate-400 text-xs mb-6">Manage profile details and security</Text>
+
+                {settingsMsg.text ? (
+                  <View className={`p-3.5 rounded-2xl mb-4 border flex-row items-center gap-2 ${
+                    settingsMsg.type === 'error' 
+                      ? 'bg-rose-500/10 border-rose-500/30' 
+                      : 'bg-emerald-500/10 border-emerald-500/30'
+                  }`}>
+                    <CheckCircle2 size={16} color={settingsMsg.type === 'error' ? '#fb7185' : '#34d399'} />
+                    <Text className={`text-xs font-bold ${
+                      settingsMsg.type === 'error' ? 'text-rose-400' : 'text-emerald-400'
+                    }`}>
+                      {settingsMsg.text}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Profile Section */}
+                <View className="bg-[#0a0f1d] p-5 rounded-2xl border border-slate-800 mb-5">
+                  <View className="flex-row items-center gap-2 mb-4">
+                    <User size={16} color="#f59e0b" />
+                    <Text className="text-slate-200 font-bold text-xs uppercase tracking-wider">Profile Information</Text>
+                  </View>
+                  
+                  <Text className="text-slate-400 text-xs mb-1.5 font-medium">Display Name</Text>
+                  <TextInput
+                    value={updateName}
+                    onChangeText={setUpdateName}
+                    placeholder="Full Name"
+                    placeholderTextColor="#475569"
+                    className="bg-[#030712] text-white px-4 py-3 rounded-xl border border-slate-800 text-sm mb-4"
+                  />
+
+                  <Text className="text-slate-400 text-xs mb-1.5 font-medium">Email Address</Text>
+                  <TextInput
+                    value={user?.email}
+                    editable={false}
+                    className="bg-[#030712]/50 text-slate-500 px-4 py-3 rounded-xl border border-slate-900 text-sm mb-2"
+                  />
+                </View>
+
+                {/* Security Section */}
+                <View className="bg-[#0a0f1d] p-5 rounded-2xl border border-slate-800 mb-6">
+                  <View className="flex-row items-center gap-2 mb-4">
+                    <Lock size={16} color="#f59e0b" />
+                    <Text className="text-slate-200 font-bold text-xs uppercase tracking-wider">Security & Credentials</Text>
+                  </View>
+                  
+                  <Text className="text-slate-400 text-xs mb-1.5 font-medium">Current Password</Text>
+                  <TextInput
+                    value={currentPassword}
+                    onChangeText={setCurrentPassword}
+                    secureTextEntry
+                    placeholder="Enter current password"
+                    placeholderTextColor="#475569"
+                    className="bg-[#030712] text-white px-4 py-3 rounded-xl border border-slate-800 text-sm mb-4"
+                  />
+
+                  <Text className="text-slate-400 text-xs mb-1.5 font-medium">New Password (Optional)</Text>
+                  <TextInput
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    secureTextEntry
+                    placeholder="Leave empty to keep current password"
+                    placeholderTextColor="#475569"
+                    className="bg-[#030712] text-white px-4 py-3 rounded-xl border border-slate-800 text-sm"
+                  />
+                </View>
+
+                <TouchableOpacity
+                  onPress={handleUpdateProfile}
+                  className="bg-amber-500 py-4 rounded-xl justify-center items-center active:opacity-80 shadow-lg shadow-amber-500/20 mb-10"
+                >
+                  <Text className="text-slate-950 font-black text-xs uppercase tracking-widest">
+                    Save Changes
+                  </Text>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+          </Animated.View>
+
+          {/* Bottom Floating Navigation Bar */}
+          <View className="flex-row border-t border-slate-800/80 bg-[#0a0f1d] px-4 py-3 gap-2">
+            <TouchableOpacity
+              onPress={() => animateTabChange('feed')}
+              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-2 active:scale-95 ${
+                activeTab === 'feed' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
+              }`}
+            >
+              <LayoutGrid size={16} color={activeTab === 'feed' ? '#f59e0b' : '#64748b'} />
+              <Text className={`font-bold text-xs tracking-wider ${activeTab === 'feed' ? 'text-amber-400' : 'text-slate-400'}`}>
+                Feed
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => animateTabChange('chat')}
+              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-2 active:scale-95 ${
+                activeTab === 'chat' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
+              }`}
+            >
+              <MessageSquare size={16} color={activeTab === 'chat' ? '#f59e0b' : '#64748b'} />
+              <Text className={`font-bold text-xs tracking-wider ${activeTab === 'chat' ? 'text-amber-400' : 'text-slate-400'}`}>
+                Chat
+              </Text>
+            </TouchableOpacity>
+
+            {isAdmin && (
+              <TouchableOpacity
+                onPress={() => animateTabChange('admin')}
+                className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-2 active:scale-95 ${
+                  activeTab === 'admin' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
+                }`}
+              >
+                <ShieldAlert size={16} color={activeTab === 'admin' ? '#f59e0b' : '#64748b'} />
+                <Text className={`font-bold text-xs tracking-wider ${activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'}`}>
+                  Admin
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
-        </View>
 
-        <TouchableOpacity
-          onPress={handleLogout}
-          className="bg-slate-900 px-3.5 py-2 rounded-xl border border-slate-800"
-        >
-          <Text className="text-rose-400 font-bold text-xs">Logout</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Safe Screen Container */}
-      <View style={{ flex: 1 }}>
-        {activeTab === 'feed' && <FeedView user={user} token={token} />}
-        {activeTab === 'chat' && <ChatView user={user} token={token} />}
-        {activeTab === 'admin' && isAdmin && <AdminView token={token} />}
-      </View>
-
-      {/* Bottom Navigation Bar */}
-      <View className="flex-row border-t border-slate-800/80 bg-[#0b0f19] px-4 py-2.5 gap-2">
-        <TouchableOpacity
-          onPress={() => setActiveTab('feed')}
-          className={`flex-1 py-3 rounded-2xl justify-center items-center flex-row gap-1.5 ${
-            activeTab === 'feed' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
-          }`}
-        >
-          <Text className="text-sm">📰</Text>
-          <Text className={`font-bold text-[11px] tracking-wide ${activeTab === 'feed' ? 'text-amber-400' : 'text-slate-400'}`}>
-            Feed
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => setActiveTab('chat')}
-          className={`flex-1 py-3 rounded-2xl justify-center items-center flex-row gap-1.5 ${
-            activeTab === 'chat' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
-          }`}
-        >
-          <Text className="text-sm">💬</Text>
-          <Text className={`font-bold text-[11px] tracking-wide ${activeTab === 'chat' ? 'text-amber-400' : 'text-slate-400'}`}>
-            Chat
-          </Text>
-        </TouchableOpacity>
-
-        {isAdmin && (
-          <TouchableOpacity
-            onPress={() => setActiveTab('admin')}
-            className={`flex-1 py-3 rounded-2xl justify-center items-center flex-row gap-1.5 ${
-              activeTab === 'admin' ? 'bg-amber-500/15 border border-amber-500/40' : 'bg-transparent'
-            }`}
-          >
-            <Text className="text-sm">🛡️</Text>
-            <Text className={`font-bold text-[11px] tracking-wide ${activeTab === 'admin' ? 'text-amber-400' : 'text-slate-400'}`}>
-              Admin
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </SafeAreaView>
+          {/* Side Drawer Component placed at bottom to guarantee highest z-index overlay */}
+          <SideMenu
+            visible={sideMenuOpen}
+            onClose={() => setSideMenuOpen(false)}
+            user={user}
+            onLogout={handleLogout}
+            onSelectTab={(tab) => {
+              animateTabChange(tab);
+              setSideMenuOpen(false);
+            }}
+          />
+        </SafeAreaView>
+      )}
+    </SafeAreaProvider>
   );
 }

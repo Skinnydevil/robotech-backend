@@ -1,4 +1,18 @@
-function AdminView({ token }) {
+import React, { useState, useEffect } from 'react';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  FlatList,
+  ActivityIndicator,
+  Alert,
+} from 'react-native';
+
+// Make sure your backend API URL is accessible here
+const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
+
+export default function AdminView({ token }) {
   const [pendingUsers, setPendingUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
 
@@ -11,6 +25,8 @@ function AdminView({ token }) {
       if (res.ok) {
         const data = await res.json();
         setPendingUsers(data);
+      } else {
+        console.error('Failed to fetch pending users');
       }
     } catch (err) {
       console.error('Failed fetching pending users:', err);
@@ -21,7 +37,7 @@ function AdminView({ token }) {
 
   useEffect(() => {
     fetchPendingUsers();
-  }, []);
+  }, [token]);
 
   const handleApproveUser = async (userId) => {
     try {
@@ -30,26 +46,46 @@ function AdminView({ token }) {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
-        fetchPendingUsers();
+        // Optimistic UI update for immediate response
+        setPendingUsers((prev) => prev.filter((user) => user._id !== userId));
+      } else {
+        Alert.alert('Error', 'Failed to approve user.');
       }
     } catch (err) {
       console.error('Failed approving user:', err);
+      Alert.alert('Error', 'Network error while approving user.');
     }
   };
 
-  // NEW: Function to delete/reject pending user
-  const handleRejectUser = async (userId) => {
-    try {
-      const res = await fetch(`${API_URL}/admin/reject-user/${userId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        fetchPendingUsers(); // Refresh list after deleting
-      }
-    } catch (err) {
-      console.error('Failed rejecting user:', err);
-    }
+  const handleRejectUser = (userId, userName) => {
+    Alert.alert(
+      'Reject Registration',
+      `Are you sure you want to reject ${userName || 'this user'}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await fetch(`${API_URL}/admin/reject-user/${userId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (res.ok) {
+                // Remove instantly from local state
+                setPendingUsers((prev) => prev.filter((user) => user._id !== userId));
+              } else {
+                Alert.alert('Error', 'Failed to reject user.');
+              }
+            } catch (err) {
+              console.error('Failed rejecting user:', err);
+              Alert.alert('Error', 'Network error while rejecting user.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -61,7 +97,7 @@ function AdminView({ token }) {
         </View>
         <TouchableOpacity
           onPress={fetchPendingUsers}
-          className="bg-slate-900 px-3 py-2 rounded-xl border border-slate-800"
+          className="bg-slate-900 px-3 py-2 rounded-xl border border-slate-800 active:scale-95"
         >
           <Text className="text-amber-400 font-bold text-xs">Refresh</Text>
         </TouchableOpacity>
@@ -78,8 +114,12 @@ function AdminView({ token }) {
           ListEmptyComponent={
             <View className="p-16 items-center justify-center">
               <Text className="text-4xl mb-2">🎉</Text>
-              <Text className="text-slate-400 text-sm font-semibold text-center">No pending user approvals</Text>
-              <Text className="text-slate-600 text-xs mt-1 text-center">All registered builders have been cleared.</Text>
+              <Text className="text-slate-400 text-sm font-semibold text-center">
+                No pending user approvals
+              </Text>
+              <Text className="text-slate-600 text-xs mt-1 text-center">
+                All registered builders have been cleared.
+              </Text>
             </View>
           }
           renderItem={({ item }) => (
@@ -94,9 +134,9 @@ function AdminView({ token }) {
 
               {/* Action Buttons Container */}
               <View className="flex-row items-center gap-2">
-                {/* Reject/Delete Button */}
+                {/* Reject Button */}
                 <TouchableOpacity
-                  onPress={() => handleRejectUser(item._id)}
+                  onPress={() => handleRejectUser(item._id, item.name)}
                   className="bg-rose-950/40 border border-rose-800/50 px-3 py-2.5 rounded-xl active:scale-95"
                 >
                   <Text className="text-rose-400 font-bold text-xs uppercase">Reject</Text>
@@ -107,7 +147,9 @@ function AdminView({ token }) {
                   onPress={() => handleApproveUser(item._id)}
                   className="bg-amber-500 px-3 py-2.5 rounded-xl active:scale-95 shadow-md shadow-amber-500/20"
                 >
-                  <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">Approve</Text>
+                  <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">
+                    Approve
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>

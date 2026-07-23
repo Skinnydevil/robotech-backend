@@ -1,4 +1,19 @@
-function FeedView({ user, token }) {
+import React, { useState, useEffect } from 'react';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  Image,
+  Alert,
+} from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+
+const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
+
+export default function FeedView({ user, token }) {
   const [posts, setPosts] = useState([]);
   const [postText, setPostText] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
@@ -10,7 +25,10 @@ function FeedView({ user, token }) {
       const res = await fetch(`${API_URL}/posts`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) setPosts(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setPosts(data);
+      }
     } catch (err) {
       console.error('Failed fetching posts:', err);
     }
@@ -23,7 +41,7 @@ function FeedView({ user, token }) {
   const handlePickImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissionResult.granted) {
-      alert('Permission to access camera roll is required!');
+      Alert.alert('Permission Required', 'Permission to access photo gallery is required!');
       return;
     }
 
@@ -33,7 +51,7 @@ function FeedView({ user, token }) {
       quality: 0.8,
     });
 
-    if (!result.canceled) {
+    if (!result.canceled && result.assets && result.assets.length > 0) {
       setSelectedImage(result.assets[0]);
     }
   };
@@ -44,8 +62,8 @@ function FeedView({ user, token }) {
     try {
       const formData = new FormData();
       formData.append('content', postText.trim());
-      formData.append('authorName', user.name);
-      formData.append('authorRole', user.role || 'member');
+      formData.append('authorName', user?.name || 'Member');
+      formData.append('authorRole', user?.role || 'member');
       formData.append('category', 'General');
 
       if (selectedImage) {
@@ -78,14 +96,31 @@ function FeedView({ user, token }) {
   };
 
   const handleToggleLike = async (postId) => {
+    // Optimistic UI Update
+    setPosts((prevPosts) =>
+      prevPosts.map((post) => {
+        if (post._id === postId) {
+          const hasLiked = post.likes?.includes(user._id);
+          const newLikes = hasLiked
+            ? post.likes.filter((id) => id !== user._id)
+            : [...(post.likes || []), user._id];
+          return { ...post, likes: newLikes };
+        }
+        return post;
+      })
+    );
+
     try {
       const res = await fetch(`${API_URL}/posts/${postId}/like`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) fetchPosts();
+      if (!res.ok) {
+        fetchPosts(); // Revert on fail
+      }
     } catch (err) {
       console.error('Failed toggling like:', err);
+      fetchPosts();
     }
   };
 
@@ -98,7 +133,10 @@ function FeedView({ user, token }) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ text: commentText.trim() }),
+        body: JSON.stringify({
+          text: commentText.trim(),
+          authorName: user?.name || 'Member',
+        }),
       });
       if (res.ok) {
         setCommentText('');
@@ -109,11 +147,19 @@ function FeedView({ user, token }) {
     }
   };
 
+  const resolveImageUrl = (mediaUrl) => {
+    if (!mediaUrl) return null;
+    if (mediaUrl.startsWith('http')) return mediaUrl;
+    const serverBaseUrl = API_URL.replace('/api', '');
+    return `${serverBaseUrl}${mediaUrl.startsWith('/') ? '' : '/'}${mediaUrl}`;
+  };
+
   return (
     <View className="flex-1 p-4 bg-[#05070a]">
       <FlatList
         data={posts}
         keyExtractor={(item) => item._id}
+        showsVerticalScrollIndicator={false}
         ListHeaderComponent={
           <View className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-3xl mb-4 shadow-xl">
             <TextInput
@@ -144,7 +190,7 @@ function FeedView({ user, token }) {
             <View className="flex-row justify-between items-center border-t border-slate-800/80 pt-3">
               <TouchableOpacity
                 onPress={handlePickImage}
-                className="bg-slate-900 px-3.5 py-2 rounded-xl flex-row items-center gap-1.5 border border-slate-800"
+                className="bg-slate-900 px-3.5 py-2 rounded-xl flex-row items-center gap-1.5 border border-slate-800 active:scale-95"
               >
                 <Text className="text-xs">📷</Text>
                 <Text className="text-slate-300 font-bold text-xs">Add Photo</Text>
@@ -161,30 +207,38 @@ function FeedView({ user, token }) {
         }
         renderItem={({ item }) => {
           const hasLiked = item.likes?.includes(user._id);
-          const serverBaseUrl = API_URL.replace('/api', '');
+          const fullMediaUrl = resolveImageUrl(item.mediaUrl);
 
           return (
             <View className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-3xl mb-3 shadow-lg">
               <View className="flex-row justify-between items-center mb-2.5">
                 <View className="flex-row items-center gap-2">
                   <View className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 justify-center items-center">
-                    <Text className="text-xs font-bold text-amber-400">{item.authorName?.[0] || 'B'}</Text>
+                    <Text className="text-xs font-bold text-amber-400">
+                      {item.authorName?.[0]?.toUpperCase() || 'M'}
+                    </Text>
                   </View>
                   <View>
                     <Text className="text-white font-bold text-sm">{item.authorName || 'Member'}</Text>
-                    <Text className="text-amber-500/80 text-[10px] uppercase font-semibold">{item.authorRole || 'builder'}</Text>
+                    <Text className="text-amber-500/80 text-[10px] uppercase font-semibold">
+                      {item.authorRole || 'builder'}
+                    </Text>
                   </View>
                 </View>
                 <Text className="text-slate-500 text-[10px] font-medium">
-                  {new Date(item.createdAt).toLocaleDateString()}
+                  {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'Recently'}
                 </Text>
               </View>
 
-              {item.content ? <Text className="text-slate-200 text-sm mb-3 font-normal leading-relaxed">{item.content}</Text> : null}
+              {item.content ? (
+                <Text className="text-slate-200 text-sm mb-3 font-normal leading-relaxed">
+                  {item.content}
+                </Text>
+              ) : null}
 
-              {item.mediaUrl && item.mediaType === 'image' && (
+              {fullMediaUrl && (
                 <Image
-                  source={{ uri: `${serverBaseUrl}${item.mediaUrl}` }}
+                  source={{ uri: fullMediaUrl }}
                   className="w-full h-56 rounded-2xl mb-3 border border-slate-800/60"
                   resizeMode="cover"
                 />
@@ -193,17 +247,22 @@ function FeedView({ user, token }) {
               <View className="flex-row gap-5 border-t border-slate-800/80 pt-3 items-center">
                 <TouchableOpacity
                   onPress={() => handleToggleLike(item._id)}
-                  className="flex-row items-center gap-1.5 bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800/50"
+                  className="flex-row items-center gap-1.5 bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800/50 active:scale-95"
                 >
                   <Text className="text-xs">{hasLiked ? '❤️' : '🤍'}</Text>
                   <Text className="text-slate-300 text-xs font-bold">{item.likes?.length || 0}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  onPress={() =>
-                    setActiveCommentPostId(activeCommentPostId === item._id ? null : item._id)
-                  }
-                  className="flex-row items-center gap-1.5 bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800/50"
+                  onPress={() => {
+                    if (activeCommentPostId === item._id) {
+                      setActiveCommentPostId(null);
+                    } else {
+                      setActiveCommentPostId(item._id);
+                      setCommentText('');
+                    }
+                  }}
+                  className="flex-row items-center gap-1.5 bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800/50 active:scale-95"
                 >
                   <Text className="text-xs">💬</Text>
                   <Text className="text-slate-300 text-xs font-bold">
@@ -215,8 +274,10 @@ function FeedView({ user, token }) {
               {activeCommentPostId === item._id && (
                 <View className="mt-3 pt-3 border-t border-slate-800/80">
                   {item.comments?.map((c, idx) => (
-                    <View key={idx} className="bg-[#05070a] p-3 rounded-2xl mb-2 border border-slate-800/60">
-                      <Text className="text-amber-400 font-bold text-[11px] mb-0.5">{c.authorName}</Text>
+                    <View key={c._id || idx} className="bg-[#05070a] p-3 rounded-2xl mb-2 border border-slate-800/60">
+                      <Text className="text-amber-400 font-bold text-[11px] mb-0.5">
+                        {c.authorName || 'Member'}
+                      </Text>
                       <Text className="text-slate-300 text-xs">{c.text}</Text>
                     </View>
                   ))}
@@ -231,7 +292,7 @@ function FeedView({ user, token }) {
                     />
                     <TouchableOpacity
                       onPress={() => handleAddComment(item._id)}
-                      className="bg-amber-500 px-4 py-2 rounded-xl justify-center shadow-md shadow-amber-500/20"
+                      className="bg-amber-500 px-4 py-2 rounded-xl justify-center shadow-md shadow-amber-500/20 active:scale-95"
                     >
                       <Text className="text-slate-950 font-black text-[10px] uppercase">Reply</Text>
                     </TouchableOpacity>
