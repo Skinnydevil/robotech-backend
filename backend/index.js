@@ -1203,7 +1203,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
 // DELETE message endpoint
-app.delete('/api/messages/:id', verifyToken, async (req, res) => {
+app.delete('/api/messages/:id', authenticateToken, async (req, res) => {
   try {
     const message = await ChatMessage.findById(req.params.id);
     if (!message) return res.status(404).json({ error: 'Message not found' });
