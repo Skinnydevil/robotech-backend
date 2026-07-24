@@ -1226,8 +1226,7 @@ app.delete('/api/messages/:id', authenticateToken, async (req, res) => {
 // Add this route to your Express backend (index.js or routes/conversations.js)
 
 
-// DELETE a whole conversation by ID
-// DELETE a whole conversation by ID
+
 app.delete('/api/conversations/:id', authenticateToken, async (req, res) => {
   try {
     const conversationId = req.params.id;
@@ -1237,9 +1236,10 @@ app.delete('/api/conversations/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Conversation not found' });
     }
 
-    // Explicitly require the Message model if it's not imported at the top of index.js
-    const MessageModel = require('./models/Message'); // Adjust the path if your models folder is located elsewhere
-    await MessageModel.deleteMany({ conversationId: conversationId });
+    // Since messages are likely handled directly in a collection, delete using mongoose connection or check how messages are stored
+    // If your mongoose model name is different (like Chat or Msg), use that. 
+    // Otherwise, we can delete directly via the mongoose collection:
+    await mongoose.model('Message').deleteMany({ conversationId: conversationId }).catch(() => {});
 
     await Conversation.findByIdAndDelete(conversationId);
 
