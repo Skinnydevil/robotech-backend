@@ -23,19 +23,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Notifications from 'expo-notifications';
 import {
   Menu,
   Settings,
   LayoutGrid,
   MessageSquare,
   ShieldAlert,
-  Lock,
   User,
   CheckCircle2,
   Calendar as CalendarIcon,
   QrCode,
   X,
-  Hash,
+  Lock,
 } from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
@@ -43,11 +43,21 @@ import ChatView from './components/ChatView';
 import FeedView from './components/FeedView';
 import CalendarView from './components/CalendarView';
 import SideMenu from './components/SideMenu';
-import { exportAttendanceCSV, shareQRCode } from './fileShareHelper';
+import RoleManagementScreen from './components/RoleManagementScreen';
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
 const SOCKET_URL = 'https://robotech-backend-bc05.onrender.com';
 const ClubLogo = require('./assets/logo.png');
+
+// Configure local notification behavior (show banner and sound when received in foreground)
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 function MainAppContent() {
   const insets = useSafeAreaInsets();
@@ -82,8 +92,70 @@ function MainAppContent() {
   const [permission, requestPermission] = useCameraPermissions();
 
   const socketRef = useRef(null);
+  const activeTabRef = useRef(activeTab);
   const isScanningRef = useRef(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
+
+  // Keep activeTabRef synchronized for socket listeners
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+  const triggerTestNotification = async () => {
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '🤖 ROBOTECH Test Alert',
+        body: 'Local notifications are configured and working correctly!',
+        sound: 'default',
+        data: { test: 'data' },
+      },
+      trigger: null, // deliver immediately
+    });
+  } catch (error) {
+    console.error('Error triggering notification:', error);
+    Alert.alert('Error', 'Could not fire notification. Check console logs.');
+  }
+};
+
+  // Request Notification Permissions on App Launch
+  useEffect(() => {
+  const registerForPushNotifications = async () => {
+    try {
+      // 1. Create Android Channel FIRST (Required for Android 8+)
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'Default Channel',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#f59e0b',
+          sound: 'default',
+          enableVibrate: true,
+          showBadge: true,
+        });
+      }
+
+      // 2. Request Permissions (Required for iOS & Android 13+)
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+
+      if (finalStatus !== 'granted') {
+        console.log('Notification permissions were not granted.');
+        return;
+      }
+
+      console.log('Notification permissions granted and channel set up.');
+    } catch (err) {
+      console.error('Failed to configure notifications:', err);
+    }
+  };
+
+  registerForPushNotifications();
+}, []);
 
   // Immediate State-Switch Navigation
   const changeTab = (newTab) => {
@@ -119,20 +191,72 @@ function MainAppContent() {
     checkToken();
   }, []);
 
+  // Socket setup & real-time notification listeners
   useEffect(() => {
     if (token) {
       socketRef.current = io(SOCKET_URL, {
         autoConnect: true,
         auth: { token },
       });
+
+      // Listen for incoming chat messages
+      // Listen for incoming chat messages
+      socketRef.current.on('receive_message', async (msg) => {
+        // Do not notify if the message was sent by the current user
+        if (msg?.sender?._id === user?._id || msg?.sender === user?._id) return;
+
+        // Skip notifying if the user is actively viewing the chat tab
+        if (activeTabRef.current === 'chat') return;
+
+        // Extract content safely with fallbacks so body is never empty/undefined
+        const senderName = 
+          msg?.sender?.name || 
+          (typeof msg?.sender === 'string' ? 'Club Member' : 'New Message');
+
+        const messageBody = 
+          msg?.content || 
+          msg?.text || 
+          msg?.message || 
+          (msg?.mediaUrl ? '📷 Sent an attachment' : 'Sent you a message.');
+
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `💬 ${senderName}`,
+            body: String(messageBody), // Force string conversion
+            sound: 'default',
+            priority: Notifications.AndroidNotificationPriority.HIGH,
+            data: { type: 'chat', messageId: msg?._id },
+          },
+          trigger: null, // deliver immediately
+        });
+      });
+
+      // Listen for new events created on the calendar
+      socketRef.current.on('event_created', async (eventData) => {
+        const eventTitle = eventData?.title || 'New Event Added';
+        const eventDate = eventData?.date
+          ? new Date(eventData.date).toLocaleDateString()
+          : '';
+
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: '📅 New Calendar Event',
+            body: `"${eventTitle}" has been added to the schedule ${eventDate ? `for ${eventDate}` : ''}.`,
+            data: { type: 'calendar' },
+          },
+          trigger: null,
+        });
+      });
     }
 
     return () => {
       if (socketRef.current) {
+        socketRef.current.off('receive_message');
+        socketRef.current.off('event_created');
         socketRef.current.disconnect();
       }
     };
-  }, [token]);
+  }, [token, user]);
 
   const handleDateChange = (event, selectedDate) => {
     setShowDatePicker(Platform.OS === 'ios');
@@ -240,6 +364,7 @@ function MainAppContent() {
 
   // Assembly Check-In QR Handler for Expo Camera
   const handleBarcodeScanned = async ({ data: rawData }) => {
+    if (!permission?.granted) return;
     if (isSubmittingCheckIn || isScanningRef.current) return;
 
     isScanningRef.current = true;
@@ -248,15 +373,20 @@ function MainAppContent() {
     try {
       let sessionId = null;
 
-      // Extract sessionId from potential URL payload formats or raw text
-      if (rawData.includes('sessionId=')) {
+      if (rawData.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(rawData);
+          sessionId = parsed.sessionId || rawData;
+        } catch (e) {
+          sessionId = rawData.trim();
+        }
+      } else if (rawData.includes('sessionId=')) {
         const match = rawData.match(/sessionId=([^&]+)/);
         if (match) sessionId = match[1];
       } else if (rawData.includes('robotech://checkin')) {
         const urlParams = new URLSearchParams(rawData.split('?')[1]);
         sessionId = urlParams.get('sessionId');
       } else {
-        // Fallback: assume raw string is the Mongo session ID directly
         sessionId = rawData.trim();
       }
 
@@ -506,6 +636,10 @@ function MainAppContent() {
             {activeTab === 'calendar' && (
               <CalendarView user={user} token={token} />
             )}
+            {/* ➕ ADD THIS LINE FOR ROLE MANAGEMENT */}
+            {activeTab === 'roles' && isAdmin && (
+              <RoleManagementScreen token={token} currentUserId={user?._id} />
+            )}
 
             {activeTab === 'admin' && isAdmin && <AdminView token={token} />}
 
@@ -533,6 +667,15 @@ function MainAppContent() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+                <TouchableOpacity
+                  onPress={triggerTestNotification}
+                  activeOpacity={0.8}
+                  className="bg-amber-500/20 border border-amber-500/50 p-4 rounded-xl items-center my-4"
+                >
+                  <Text className="text-amber-500 font-bold text-xs uppercase tracking-wider">
+                    🔔 Trigger Test Notification
+                  </Text>
+                </TouchableOpacity>
 
                 {settingsMsg.text ? (
                   <View
@@ -688,25 +831,46 @@ function MainAppContent() {
             </TouchableOpacity>
 
             {isAdmin && (
-              <TouchableOpacity
-                onPress={() => changeTab('admin')}
-                activeOpacity={0.6}
-                className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-                  activeTab === 'admin'
-                    ? 'bg-amber-500/15 border border-amber-500/40'
-                    : 'bg-transparent'
-                }`}
-              >
-                <ShieldAlert size={15} color={activeTab === 'admin' ? '#f59e0b' : '#64748b'} />
-                <Text
-                  className={`font-bold text-[11px] tracking-wide ${
-                    activeTab === 'admin' ? 'text-amber-500' : 'text-slate-400'
-                  }`}
-                >
-                  Admin
-                </Text>
-              </TouchableOpacity>
-            )}
+  <>
+    <TouchableOpacity
+      onPress={() => changeTab('admin')}
+      activeOpacity={0.6}
+      className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
+        activeTab === 'admin'
+          ? 'bg-amber-500/15 border border-amber-500/40'
+          : 'bg-transparent'
+      }`}
+    >
+      <ShieldAlert size={15} color={activeTab === 'admin' ? '#f59e0b' : '#64748b'} />
+      <Text
+        className={`font-bold text-[11px] tracking-wide ${
+          activeTab === 'admin' ? 'text-amber-500' : 'text-slate-400'
+        }`}
+      >
+        Admin
+      </Text>
+    </TouchableOpacity>
+
+    <TouchableOpacity
+      onPress={() => changeTab('roles')}
+      activeOpacity={0.6}
+      className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
+        activeTab === 'roles'
+          ? 'bg-amber-500/15 border border-amber-500/40'
+          : 'bg-transparent'
+      }`}
+    >
+      <User size={15} color={activeTab === 'roles' ? '#f59e0b' : '#64748b'} />
+      <Text
+        className={`font-bold text-[11px] tracking-wide ${
+          activeTab === 'roles' ? 'text-amber-500' : 'text-slate-400'
+        }`}
+      >
+        Roles
+      </Text>
+    </TouchableOpacity>
+  </>
+)}
           </View>
 
           {/* General Assembly Attendance QR Scanner Modal */}

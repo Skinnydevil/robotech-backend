@@ -10,8 +10,17 @@ import {
   ScrollView,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import { QrCode, Users, RefreshCw, UserCheck, Share2, Download, Power } from 'lucide-react-native';
-import { exportAttendanceCSV, shareQRCode } from '../fileShareHelper'; // Adjust import path if file is in another directory
+import {
+  QrCode,
+  Users,
+  RefreshCw,
+  UserCheck,
+  Share2,
+  Download,
+  Power,
+  ShieldAlert,
+} from 'lucide-react-native';
+import { exportAttendanceCSV, shareQRCode } from '../fileShareHelper'; // Adjust import path if needed
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
 
@@ -56,7 +65,7 @@ export default function AdminView({ token }) {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data && data.status === 'active') {
+        if (data && (data.status === 'active' || data.isActive)) {
           setActiveAssembly(data);
         } else {
           setActiveAssembly(null);
@@ -137,7 +146,7 @@ export default function AdminView({ token }) {
       const data = await res.json();
 
       if (res.ok) {
-        setActiveAssembly(data.assembly);
+        setActiveAssembly(data.assembly || data);
         setAttendees([]);
         setAssemblyName('');
       } else {
@@ -161,18 +170,41 @@ export default function AdminView({ token }) {
           text: 'Close Session',
           style: 'destructive',
           onPress: async () => {
-            const targetId = activeAssembly?._id || activeAssembly?.sessionId;
+            const targetId = activeAssembly?._id || activeAssembly?.sessionId || activeAssembly?.id;
+
+            if (!targetId) {
+              Alert.alert('Error', 'Session ID not found.');
+              return;
+            }
+
             try {
-              const res = await fetch(`${API_URL}/admin/assembly/${targetId}/stop`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
+              // Primary Attempt: PUT request to /close endpoint
+              let res = await fetch(`${API_URL}/admin/assembly/${targetId}/close`, {
+                method: 'PUT',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                },
               });
+
+              // Fallback Attempt: POST request to /stop endpoint if /close route is not matched
+              if (!res.ok && res.status === 404) {
+                res = await fetch(`${API_URL}/admin/assembly/${targetId}/stop`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                  },
+                });
+              }
+
               if (res.ok) {
                 setActiveAssembly(null);
                 setAttendees([]);
                 Alert.alert('Session Ended', 'Assembly check-in session has been closed.');
               } else {
-                Alert.alert('Error', 'Failed to close assembly session on server.');
+                const data = await res.json().catch(() => ({}));
+                Alert.alert('Error', data.error || 'Failed to close assembly session on server.');
               }
             } catch (err) {
               Alert.alert('Error', 'Network error closing session.');
@@ -185,8 +217,9 @@ export default function AdminView({ token }) {
 
   // Fetch Attendees
   const fetchAttendees = async () => {
-    if (!activeAssembly?._id && !activeAssembly?.sessionId) return;
-    const targetId = activeAssembly._id || activeAssembly.sessionId;
+    const targetId = activeAssembly?._id || activeAssembly?.sessionId || activeAssembly?.id;
+    if (!targetId) return;
+
     try {
       const res = await fetch(`${API_URL}/admin/assembly/${targetId}/attendees`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -368,7 +401,7 @@ export default function AdminView({ token }) {
                   getRef={(c) => (qrRef.current = c)}
                   value={JSON.stringify({
                     type: 'GENERAL_ASSEMBLY_CHECKIN',
-                    sessionId: activeAssembly._id || activeAssembly.sessionId,
+                    sessionId: activeAssembly._id || activeAssembly.sessionId || activeAssembly.id,
                   })}
                   size={200}
                 />

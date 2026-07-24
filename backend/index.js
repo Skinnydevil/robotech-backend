@@ -268,10 +268,52 @@ app.delete('/api/admin/reject-user/:id', authenticateToken, requireAdmin, async 
   }
 });
 
-// Admin: Start a new General Assembly session & generate QR payload
+// Fetch all users (members and admins) for Role Management
+app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const users = await User.find({ role: { $in: ['member', 'admin'] } }).select('-password');
+    res.json(users);
+  } catch (err) {
+    console.error('Fetch admin users error:', err);
+    res.status(500).json({ error: 'Failed to load members for role management' });
+  }
+});
+
+// Update user role (promote to admin or demote to member)
+app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { role } = req.body;
+    const targetUserId = req.params.userId;
+    const requesterId = req.user.id || req.user._id;
+
+    if (!['admin', 'member'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role specification.' });
+    }
+
+    if (targetUserId.toString() === requesterId.toString() && role === 'member') {
+      return res.status(400).json({ error: 'You cannot revoke your own admin access.' });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      targetUserId,
+      { role },
+      { new: true, select: '-password' }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    res.json({ message: 'Role updated successfully', user: updatedUser });
+  } catch (err) {
+    console.error('Update role error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Start a new General Assembly session
 app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    // Close prior active sessions
     await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
 
     const hostUserId = req.user.id || req.user._id;
@@ -303,7 +345,38 @@ app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (re
   }
 });
 
-// Admin: Get real-time attendees for a specific session
+// Close ALL currently active General Assembly sessions (Static route before dynamic :id)
+app.put('/api/admin/assembly/close-active', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
+    res.json({ message: 'All active sessions closed successfully' });
+  } catch (err) {
+    console.error('Error closing active sessions:', err);
+    res.status(500).json({ error: 'Failed to close assembly session on server' });
+  }
+});
+
+// Close / End a specific General Assembly session
+app.put('/api/admin/assembly/:id/close', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const session = await AssemblySession.findByIdAndUpdate(
+      req.params.id,
+      { status: 'closed' },
+      { new: true }
+    );
+
+    if (!session) {
+      return res.status(404).json({ error: 'Assembly session not found' });
+    }
+
+    res.json({ message: 'Assembly session closed successfully', session });
+  } catch (err) {
+    console.error('Error closing assembly session:', err);
+    res.status(500).json({ error: 'Failed to close assembly session on server' });
+  }
+});
+
+// Get real-time attendees for a specific session
 app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const session = await AssemblySession.findById(req.params.id).populate(
@@ -791,37 +864,10 @@ io.on('connection', (socket) => {
   });
 });
 
+// ==========================================
+// SERVER INITIALIZATION
+// ==========================================
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server listening on port ${PORT}`);
-});
-// Admin: Close / End a specific General Assembly session
-app.put('/api/admin/assembly/:id/close', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const session = await AssemblySession.findByIdAndUpdate(
-      req.params.id,
-      { status: 'closed' },
-      { new: true }
-    );
-
-    if (!session) {
-      return res.status(404).json({ error: 'Assembly session not found' });
-    }
-
-    res.json({ message: 'Assembly session closed successfully', session });
-  } catch (err) {
-    console.error('Error closing assembly session:', err);
-    res.status(500).json({ error: 'Failed to close assembly session on server' });
-  }
-});
-
-// Admin: Close ALL currently active General Assembly sessions (Fallback)
-app.put('/api/admin/assembly/close-active', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
-    res.json({ message: 'All active sessions closed successfully' });
-  } catch (err) {
-    console.error('Error closing active sessions:', err);
-    res.status(500).json({ error: 'Failed to close assembly session on server' });
-  }
 });

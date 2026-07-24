@@ -7,7 +7,7 @@ import {
   Pressable,
   SafeAreaView,
 } from 'react-native';
-import { LayoutGrid, MessageSquare, ShieldAlert, Settings, LogOut, X } from 'lucide-react-native';
+import { LayoutGrid, MessageSquare, ShieldAlert, Users, Settings, LogOut, X } from 'lucide-react-native';
 
 export default function SideMenu({ visible, onClose, user, onLogout, onSelectTab }) {
   const isAdmin = user?.role === 'admin';
@@ -56,13 +56,23 @@ export default function SideMenu({ visible, onClose, user, onLogout, onSelectTab
               </TouchableOpacity>
 
               {isAdmin && (
-                <TouchableOpacity
-                  onPress={() => onSelectTab('admin')}
-                  className="flex-row items-center gap-3 p-3.5 rounded-xl bg-[#030712] border border-slate-800/80 active:bg-amber-500/10"
-                >
-                  <ShieldAlert size={18} color="#f59e0b" />
-                  <Text className="text-slate-200 font-bold text-sm">Admin View</Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity
+                    onPress={() => onSelectTab('admin')}
+                    className="flex-row items-center gap-3 p-3.5 rounded-xl bg-[#030712] border border-slate-800/80 active:bg-amber-500/10"
+                  >
+                    <ShieldAlert size={18} color="#f59e0b" />
+                    <Text className="text-slate-200 font-bold text-sm">Admin View</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => onSelectTab('roles')}
+                    className="flex-row items-center gap-3 p-3.5 rounded-xl bg-[#030712] border border-slate-800/80 active:bg-amber-500/10"
+                  >
+                    <Users size={18} color="#f59e0b" />
+                    <Text className="text-slate-200 font-bold text-sm">Roles Management</Text>
+                  </TouchableOpacity>
+                </>
               )}
 
               <TouchableOpacity
