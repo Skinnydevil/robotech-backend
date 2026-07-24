@@ -105,7 +105,7 @@ const UserSchema = new mongoose.Schema(
 
 const User = mongoose.model('User', UserSchema);
 
-// Tag Settings Schema
+// Tag Settings Schema for Public Policy Control
 const TagSettingsSchema = new mongoose.Schema(
   {
     allowPublicCreation: { type: Boolean, default: false },
@@ -141,12 +141,7 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Invalid or expired token.' });
-    
-    // Normalize user ID property across token payloads
-    req.user = {
-      ...user,
-      _id: user.id || user._id,
-    };
+    req.user = user;
     next();
   });
 };
@@ -154,7 +149,7 @@ const authenticateToken = (req, res, next) => {
 // Middleware: Require Admin or Board Role
 const requireAdmin = async (req, res, next) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user?.id || req.user?._id;
     if (!userId) {
       return res.status(401).json({ error: 'Access denied. User identity unverified.' });
     }
@@ -180,7 +175,7 @@ const requireAdmin = async (req, res, next) => {
 app.put('/api/users/push-token', authenticateToken, async (req, res) => {
   try {
     const { pushToken } = req.body;
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
     await User.findByIdAndUpdate(userId, { pushToken });
     res.json({ message: 'Push token saved successfully' });
   } catch (err) {
@@ -273,6 +268,7 @@ app.post('/api/auth/login', async (req, res) => {
 // ==========================================
 // TAG SYSTEM API ROUTES
 // ==========================================
+
 app.post('/api/tags', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name, color, isPublic } = req.body;
@@ -400,7 +396,7 @@ app.put('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, 
 app.put('/api/users/profile/tags', authenticateToken, async (req, res) => {
   try {
     const { tagIds } = req.body;
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
 
     if (!Array.isArray(tagIds)) {
       return res.status(400).json({ error: 'tagIds must be an array.' });
@@ -449,6 +445,7 @@ app.delete('/api/users/:userId/tags/:tagId', authenticateToken, requireAdmin, as
 // ==========================================
 // TAG SETTINGS API ROUTES
 // ==========================================
+
 app.get('/api/tags/settings', authenticateToken, async (req, res) => {
   try {
     let settings = await TagSettings.findOne();
@@ -484,6 +481,7 @@ app.put('/api/tags/settings', authenticateToken, requireAdmin, async (req, res) 
 // ==========================================
 // ADMIN ROUTES
 // ==========================================
+
 app.get('/api/admin/pending-users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const pendingUsers = await User.find({ role: { $regex: /^pending$/i } }).select('-password');
@@ -526,7 +524,7 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
   try {
     const { role } = req.body;
     const targetUserId = req.params.userId;
-    const requesterId = req.user._id;
+    const requesterId = req.user.id || req.user._id;
 
     const normalizedRole = role ? role.toLowerCase() : '';
 
@@ -558,7 +556,7 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
 app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const targetUserId = req.params.userId;
-    const requesterId = req.user._id;
+    const requesterId = req.user.id || req.user._id;
 
     if (targetUserId.toString() === requesterId.toString()) {
       return res.status(400).json({ error: 'You cannot delete your own account from the admin panel.' });
@@ -581,7 +579,7 @@ app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (re
   try {
     await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
 
-    const hostUserId = req.user._id;
+    const hostUserId = req.user.id || req.user._id;
 
     const newSession = new AssemblySession({
       title: req.body.title || 'General Assembly',
@@ -668,6 +666,7 @@ app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, as
 // ==========================================
 // GENERAL ASSEMBLY CHECK-IN ROUTES (MEMBERS)
 // ==========================================
+
 app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
   try {
     const activeSession = await AssemblySession.findOne({ status: 'active' }).populate(
@@ -700,7 +699,7 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Assembly session is either expired or invalid' });
     }
 
-    const currentUserId = req.user._id;
+    const currentUserId = req.user.id || req.user._id;
 
     const alreadyCheckedIn = session.attendees.some(
       (a) => a.userId && a.userId.toString() === currentUserId.toString()
@@ -740,9 +739,12 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
       .populate({
         path: 'author',
         select: 'name email role tags',
-        populate: { path: 'tags' },
+        populate: { path: 'tags' }
       })
-      .populate('comments.authorId', 'name avatar')
+      .populate({
+        path: 'comments.user',
+        select: 'name email'
+      })
       .sort({ createdAt: -1 });
     res.json(posts);
   } catch (err) {
@@ -753,7 +755,7 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
 app.post('/api/posts', authenticateToken, upload.single('media'), async (req, res) => {
   try {
     const { content, category } = req.body;
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
 
     if (!content && !req.file) {
       return res.status(400).json({ error: 'Post must contain text or media' });
@@ -782,7 +784,7 @@ app.post('/api/posts', authenticateToken, upload.single('media'), async (req, re
     const populatedPost = await Post.findById(newPost._id).populate({
       path: 'author',
       select: 'name email role tags',
-      populate: { path: 'tags' },
+      populate: { path: 'tags' }
     });
 
     res.status(201).json(populatedPost);
@@ -797,7 +799,7 @@ app.put('/api/posts/:id/like', authenticateToken, async (req, res) => {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
     const hasLiked = post.likes.includes(userId);
 
     if (hasLiked) {
@@ -812,9 +814,12 @@ app.put('/api/posts/:id/like', authenticateToken, async (req, res) => {
       .populate({
         path: 'author',
         select: 'name email role tags',
-        populate: { path: 'tags' },
+        populate: { path: 'tags' }
       })
-      .populate('comments.authorId', 'name avatar');
+      .populate({
+        path: 'comments.user',
+        select: 'name email'
+      });
 
     res.json(updatedPost);
   } catch (error) {
@@ -824,7 +829,7 @@ app.put('/api/posts/:id/like', authenticateToken, async (req, res) => {
 
 app.post('/api/posts/:id/comment', authenticateToken, async (req, res) => {
   try {
-    const { text, parentId } = req.body;
+    const { text } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json({ error: 'Comment text cannot be empty' });
     }
@@ -832,13 +837,11 @@ app.post('/api/posts/:id/comment', authenticateToken, async (req, res) => {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
 
     post.comments.push({
-      authorId: userId,
-      authorName: req.user.name || 'Member',
+      user: userId,
       text: text.trim(),
-      parentId: parentId || null,
     });
 
     await post.save();
@@ -847,9 +850,12 @@ app.post('/api/posts/:id/comment', authenticateToken, async (req, res) => {
       .populate({
         path: 'author',
         select: 'name email role tags',
-        populate: { path: 'tags' },
+        populate: { path: 'tags' }
       })
-      .populate('comments.authorId', 'name avatar');
+      .populate({
+        path: 'comments.user',
+        select: 'name email'
+      });
 
     res.json(updatedPost);
   } catch (error) {
@@ -862,8 +868,8 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    const userId = req.user._id;
-    const isAuthor = post.author && post.author.toString() === userId.toString();
+    const userId = req.user.id || req.user._id;
+    const isAuthor = post.author?.toString() === userId.toString() || post.authorId?.toString() === userId.toString();
     const isAdmin = String(req.user.role).toLowerCase() === 'admin';
 
     if (!isAuthor && !isAdmin) {
@@ -882,7 +888,7 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
 // ==========================================
 app.get('/api/users/profile', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
     const user = await User.findById(userId).select('-password').populate('tags');
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json(user);
@@ -894,7 +900,7 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
 app.put('/api/users/profile', authenticateToken, async (req, res) => {
   try {
     const { name, currentPassword, newPassword } = req.body;
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -935,7 +941,7 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
 // ==========================================
 app.get('/api/users/members', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
     const members = await User.find({ role: { $ne: 'pending' }, _id: { $ne: userId } }).select(
       'name email role _id inscriptionNumber'
     );
@@ -947,7 +953,7 @@ app.get('/api/users/members', authenticateToken, async (req, res) => {
 
 app.get('/api/conversations', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
     const conversations = await Conversation.find({ participants: userId })
       .populate('participants', 'name role email')
       .sort({ updatedAt: -1 });
@@ -960,7 +966,7 @@ app.get('/api/conversations', authenticateToken, async (req, res) => {
 app.post('/api/conversations', authenticateToken, async (req, res) => {
   try {
     const { recipientId, participantIds, isGroup, groupName } = req.body;
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
 
     if (!isGroup) {
       let existingConv = await Conversation.findOne({
@@ -1041,7 +1047,7 @@ app.post('/api/events', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Title and Date are required.' });
     }
 
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
 
     const newEvent = new Event({
       title,
@@ -1083,7 +1089,7 @@ app.put('/api/events/:id/rsvp', authenticateToken, async (req, res) => {
     const event = await Event.findById(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const userId = req.user._id.toString();
+    const userId = (req.user.id || req.user._id).toString();
     const hasRsvped = event.rsvps.some((id) => id.toString() === userId);
 
     if (hasRsvped) {
@@ -1109,10 +1115,7 @@ io.use((socket, next) => {
   }
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) return next(new Error('Authentication error: Invalid token'));
-    socket.user = {
-      ...decoded,
-      _id: decoded.id || decoded._id,
-    };
+    socket.user = decoded;
     next();
   });
 });
@@ -1129,7 +1132,7 @@ io.on('connection', (socket) => {
   socket.on('send_private_message', async (data) => {
     try {
       const { conversationId, text, senderId, senderName } = data;
-      const currentUserId = socket.user._id;
+      const currentUserId = socket.user.id || socket.user._id;
 
       const newMessage = new ChatMessage({
         conversationId,
