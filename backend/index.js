@@ -1,6 +1,3 @@
-const dns = require('dns');
-dns.setServers(['8.8.8.8', '8.8.4.4']);
-
 require('dotenv').config();
 const fs = require('fs');
 const express = require('express');
@@ -82,7 +79,9 @@ const sendPushNotifications = async (tokens, title, body, data = {}) => {
 // DATABASE & SCHEMAS
 // ==========================================
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(process.env.MONGO_URI, {
+    family: 4, // Forces IPv4 resolution for MongoDB Atlas SRV lookup
+  })
   .then(() => console.log('🔌 Connected securely to MongoDB Cloud Database'))
   .catch((err) => console.error('❌ Database connection failed:', err));
 
