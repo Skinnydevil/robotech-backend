@@ -333,27 +333,54 @@ app.delete('/api/tags/:id', authenticateToken, requireAdmin, async (req, res) =>
 });
 
 // Assign tags to a user (Admin / Board only)
+// 1. ASSIGN / ADD TAGS TO A USER (Admin/Board only)
 app.post('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { tagIds } = req.body;
+    const { tagIds } = req.body; // Array of Tag ObjectIds e.g. ["66a1...", "66a2..."]
 
     if (!Array.isArray(tagIds)) {
-      return res.status(400).json({ error: 'tagIds must be an array' });
+      return res.status(400).json({ error: 'tagIds must be an array of tag IDs.' });
     }
 
+    // $addToSet adds tags without creating duplicates
     const user = await User.findByIdAndUpdate(
       req.params.userId,
       { $addToSet: { tags: { $each: tagIds } } },
       { new: true }
-    ).populate('tags');
+    ).select('-password').populate('tags');
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found.' });
     }
 
-    res.json({ message: 'Tags assigned successfully', tags: user.tags });
+    res.json({ message: 'Tags assigned successfully', user });
   } catch (error) {
     res.status(500).json({ error: 'Failed to assign tags', details: error.message });
+  }
+});
+
+// 2. OVERWRITE / SET ALL TAGS FOR A USER (Admin/Board only)
+app.put('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { tagIds } = req.body; // Complete list of selected tag IDs
+
+    if (!Array.isArray(tagIds)) {
+      return res.status(400).json({ error: 'tagIds must be an array.' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.params.userId,
+      { tags: tagIds },
+      { new: true }
+    ).select('-password').populate('tags');
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    res.json({ message: 'User tags updated successfully', user });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update tags', details: error.message });
   }
 });
 

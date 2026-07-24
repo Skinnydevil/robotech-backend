@@ -7,19 +7,27 @@ import {
   Alert,
   ActivityIndicator,
   StyleSheet,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  // States for Tag Management Modal
+  const [allTags, setAllTags] = useState([]);
+  const [selectedUserForTags, setSelectedUserForTags] = useState(null);
+  const [userSelectedTagIds, setUserSelectedTagIds] = useState([]);
+  const [tagModalVisible, setTagModalVisible] = useState(false);
 
-  // Strip any trailing slash from the base URL automatically
   const rawUrl = apiUrl || 'https://robotech-backend-bc05.onrender.com';
   const BASE_URL = rawUrl.replace(/\/+$/, '');
 
   useEffect(() => {
     fetchUsers();
+    fetchAllTags();
   }, []);
 
   const fetchUsers = async () => {
@@ -31,10 +39,7 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
 
     try {
       setLoading(true);
-      const endpoint = `${BASE_URL}/api/admin/users`;
-      console.log('Fetching users from:', endpoint);
-
-      const response = await fetch(endpoint, {
+      const response = await fetch(`${BASE_URL}/api/admin/users`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -42,62 +47,105 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
         },
       });
 
-      // Safely check if Render/Express returned HTML instead of JSON
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
         const text = await response.text();
-        console.error('Non-JSON response received (Status ' + response.status + '):', text);
-        Alert.alert(
-          'Server Error',
-          `Server returned status ${response.status}. Check your Render route path or server logs.`
-        );
+        console.error('Non-JSON response:', text);
+        Alert.alert('Server Error', `Server returned status ${response.status}.`);
         return;
       }
 
       const data = await response.json();
-
       if (response.ok) {
         setUsers(data);
       } else {
-        Alert.alert('Error', data.error || data.message || 'Failed to load member list.');
+        Alert.alert('Error', data.error || 'Failed to load member list.');
       }
     } catch (err) {
-      console.error('Fetch users error details:', err);
-      Alert.alert('Network Error', 'Failed to connect to backend server. Make sure your Render instance is active.');
+      console.error('Fetch users error:', err);
+      Alert.alert('Network Error', 'Failed to connect to backend server.');
     } finally {
       setLoading(false);
     }
   };
 
+  const fetchAllTags = async () => {
+    try {
+      const response = await fetch(`${BASE_URL}/api/tags`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setAllTags(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch tags list:', err);
+    }
+  };
+
+  const openTagModal = (user) => {
+    setSelectedUserForTags(user);
+    // Extract existing tag IDs from user object (handles populated objects or raw IDs)
+    const existingIds = (user.tags || []).map((t) => (typeof t === 'object' ? t._id : t));
+    setUserSelectedTagIds(existingIds);
+    setTagModalVisible(true);
+  };
+
+  const toggleTagSelection = (tagId) => {
+    setUserSelectedTagIds((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    );
+  };
+
+  const saveUserTags = async () => {
+    if (!selectedUserForTags) return;
+
+    try {
+      const response = await fetch(`${BASE_URL}/api/users/${selectedUserForTags._id}/tags`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ tagIds: userSelectedTagIds }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Update local state
+        setUsers((prevUsers) =>
+          prevUsers.map((u) => (u._id === selectedUserForTags._id ? data.user : u))
+        );
+        setTagModalVisible(false);
+        Alert.alert('Success', 'User tags updated successfully!');
+      } else {
+        Alert.alert('Update Failed', data.error || 'Could not update tags.');
+      }
+    } catch (err) {
+      console.error('Update tags error:', err);
+      Alert.alert('Error', 'Failed to save tags.');
+    }
+  };
+
   const handleToggleRole = (user) => {
-    // Prevent modifying self
     if (user._id === currentUserId) {
       Alert.alert('Notice', 'You cannot change your own admin role.');
       return;
     }
 
     const newRole = user.role === 'admin' ? 'member' : 'admin';
-
     Alert.alert(
       'Confirm Role Change',
-      `Are you sure you want to change ${user.name}'s role to "${newRole.toUpperCase()}"?`,
+      `Change ${user.name}'s role to "${newRole.toUpperCase()}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          style: newRole === 'admin' ? 'default' : 'destructive',
-          onPress: () => updateRole(user._id, newRole),
-        },
+        { text: 'Confirm', onPress: () => updateRole(user._id, newRole) },
       ]
     );
   };
 
   const updateRole = async (userId, newRole) => {
-    if (!token) {
-      Alert.alert('Authentication Error', 'No active login token found.');
-      return;
-    }
-
     try {
       const response = await fetch(`${BASE_URL}/api/admin/users/${userId}/role`, {
         method: 'PUT',
@@ -108,84 +156,48 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
         body: JSON.stringify({ role: newRole }),
       });
 
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('Non-JSON update response:', text);
-        Alert.alert('Server Error', `Could not update role (Status ${response.status}).`);
-        return;
-      }
-
       const data = await response.json();
-
       if (response.ok) {
-        // Update local state immediately
         setUsers((prevUsers) =>
           prevUsers.map((u) => (u._id === userId ? { ...u, role: newRole } : u))
         );
       } else {
-        Alert.alert('Update Failed', data.error || data.message || 'Could not update role.');
+        Alert.alert('Update Failed', data.error || 'Could not update role.');
       }
     } catch (err) {
-      console.error('Update role error details:', err);
       Alert.alert('Error', 'Failed to update user role.');
     }
   };
 
   const handleDeleteUser = (user) => {
-    // Prevent self-deletion
     if (user._id === currentUserId) {
-      Alert.alert('Action Restricted', 'You cannot delete your own account from the admin dashboard.');
+      Alert.alert('Action Restricted', 'You cannot delete your own account.');
       return;
     }
 
     Alert.alert(
       'Delete User',
-      `Are you sure you want to permanently delete ${user.name}? This action cannot be undone.`,
+      `Permanently delete ${user.name}?`,
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteUser(user._id),
-        },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteUser(user._id) },
       ]
     );
   };
 
   const deleteUser = async (userId) => {
-    if (!token) {
-      Alert.alert('Authentication Error', 'No active login token found.');
-      return;
-    }
-
     try {
       const response = await fetch(`${BASE_URL}/api/admin/users/${userId}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('Non-JSON delete response:', text);
-        Alert.alert('Server Error', `Could not delete user (Status ${response.status}).`);
-        return;
-      }
-
-      const data = await response.json();
-
       if (response.ok) {
-        // Remove user from local state immediately
         setUsers((prevUsers) => prevUsers.filter((u) => u._id !== userId));
       } else {
-        Alert.alert('Delete Failed', data.error || data.message || 'Could not delete user.');
+        Alert.alert('Delete Failed', 'Could not delete user.');
       }
     } catch (err) {
-      console.error('Delete user error details:', err);
       Alert.alert('Error', 'Failed to delete user.');
     }
   };
@@ -201,12 +213,27 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
             {item.name} {isSelf && <Text style={styles.selfLabel}>(You)</Text>}
           </Text>
           <Text style={styles.userEmail}>{item.email}</Text>
-          {item.inscriptionNumber && (
-            <Text style={styles.userSubText}>ID: {item.inscriptionNumber}</Text>
-          )}
+          
+          {/* Render User Tags */}
+          <View style={styles.tagChipsContainer}>
+            {item.tags && item.tags.length > 0 ? (
+              item.tags.map((tag, idx) => (
+                <View key={idx} style={styles.tagChip}>
+                  <Text style={styles.tagChipText}>{typeof tag === 'object' ? tag.name : 'Tag'}</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.noTagsText}>No tags assigned</Text>
+            )}
+          </View>
         </View>
 
         <View style={styles.actionsContainer}>
+          {/* Tag Management Button */}
+          <TouchableOpacity style={styles.tagButton} onPress={() => openTagModal(item)}>
+            <Text style={styles.tagButtonText}>🏷️ Tags</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={[styles.badge, isAdmin ? styles.adminBadge : styles.memberBadge]}
             onPress={() => handleToggleRole(item)}
@@ -217,10 +244,7 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
           </TouchableOpacity>
 
           {!isSelf && (
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => handleDeleteUser(item)}
-            >
+            <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteUser(item)}>
               <Text style={styles.deleteButtonText}>🗑️</Text>
             </TouchableOpacity>
           )}
@@ -239,7 +263,7 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.headerTitle}>Role Management</Text>
+      <Text style={styles.headerTitle}>Role & Tag Management</Text>
       <FlatList
         data={users}
         keyExtractor={(item) => item._id}
@@ -248,6 +272,53 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
         onRefresh={fetchUsers}
         refreshing={loading}
       />
+
+      {/* Tag Assignment Modal */}
+      <Modal visible={tagModalVisible} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              Assign Tags to {selectedUserForTags?.name}
+            </Text>
+
+            <ScrollView style={styles.modalScroll}>
+              {allTags.length === 0 ? (
+                <Text style={styles.noTagsText}>No tags found. Create some first!</Text>
+              ) : (
+                allTags.map((tag) => {
+                  const isSelected = userSelectedTagIds.includes(tag._id);
+                  return (
+                    <TouchableOpacity
+                      key={tag._id}
+                      style={[styles.modalTagItem, isSelected && styles.modalTagSelected]}
+                      onPress={() => toggleTagSelection(tag._id)}
+                    >
+                      <Text style={[styles.modalTagText, isSelected && styles.modalTagTextSelected]}>
+                        {tag.name} {isSelected ? '✓' : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setTagModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={saveUserTags}
+              >
+                <Text style={styles.saveButtonText}>Save Tags</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -259,7 +330,7 @@ const styles = StyleSheet.create({
   listContainer: { paddingHorizontal: 16 },
   card: {
     backgroundColor: '#030712',
-    padding: 16,
+    padding: 14,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.2)',
@@ -268,27 +339,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 10,
   },
-  userInfo: { flex: 1, marginRight: 10 },
+  userInfo: { flex: 1, marginRight: 8 },
   userName: { fontSize: 16, fontWeight: '600', color: '#f8fafc' },
   selfLabel: { fontSize: 12, color: '#f59e0b', fontWeight: 'normal' },
-  userEmail: { fontSize: 13, color: '#94a3b8', marginTop: 2 },
-  userSubText: { fontSize: 11, color: '#64748b', marginTop: 2 },
-  actionsContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  badge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20 },
+  userEmail: { fontSize: 12, color: '#94a3b8', marginTop: 1 },
+  tagChipsContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },
+  tagChip: { backgroundColor: 'rgba(59, 130, 246, 0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  tagChipText: { fontSize: 10, color: '#60a5fa' },
+  noTagsText: { fontSize: 11, color: '#64748b', fontStyle: 'italic' },
+  actionsContainer: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  tagButton: { backgroundColor: 'rgba(59, 130, 246, 0.15)', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 },
+  tagButtonText: { fontSize: 11, color: '#60a5fa', fontWeight: '600' },
+  badge: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 20 },
   adminBadge: { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderWidth: 1, borderColor: '#f59e0b' },
   memberBadge: { backgroundColor: '#1e293b' },
-  badgeText: { fontSize: 12, fontWeight: '600' },
+  badgeText: { fontSize: 11, fontWeight: '600' },
   adminText: { color: '#f59e0b' },
   memberText: { color: '#94a3b8' },
   deleteButton: {
     backgroundColor: 'rgba(239, 68, 68, 0.15)',
     borderWidth: 1,
     borderColor: 'rgba(239, 68, 68, 0.4)',
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 6,
     borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
-  deleteButtonText: { fontSize: 13 },
+  deleteButtonText: { fontSize: 12 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 20 },
+  modalContent: { backgroundColor: '#030712', borderRadius: 16, padding: 20, maxHeight: '80%', borderWidth: 1, borderColor: '#f59e0b' },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#f8fafc', marginBottom: 15 },
+  modalScroll: { maxHeight: 300, marginBottom: 15 },
+  modalTagItem: { padding: 12, borderRadius: 8, backgroundColor: '#1e293b', marginBottom: 8 },
+  modalTagSelected: { backgroundColor: 'rgba(245, 158, 11, 0.2)', borderWidth: 1, borderColor: '#f59e0b' },
+  modalTagText: { color: '#94a3b8', fontSize: 14 },
+  modalTagTextSelected: { color: '#f59e0b', fontWeight: '600' },
+  modalActions: { flexDirection: 'row', gap: 10 },
+  modalButton: { flex: 1, padding: 12, borderRadius: 8, alignItems: 'center' },
+  cancelButton: { backgroundColor: '#1e293b' },
+  cancelButtonText: { color: '#94a3b8', fontWeight: '600' },
+  saveButton: { backgroundColor: '#f59e0b' },
+  saveButtonText: { color: '#030712', fontWeight: '700' },
 });
