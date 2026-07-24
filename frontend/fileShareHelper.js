@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system/next';
 import * as Sharing from 'expo-sharing';
 import { Alert } from 'react-native';
 
@@ -37,22 +37,22 @@ export const exportAttendanceCSV = async (session) => {
       .replace(/[^a-zA-Z0-9_-]/g, '_')
       .toLowerCase();
     const filename = `Attendance_${sanitizedTitle}_${Date.now()}.csv`;
-    const path = `${FileSystem.cacheDirectory}${filename}`;
 
-    // Write CSV content to local cache directory
-    await FileSystem.writeAsStringAsync(path, csvData, {
-      encoding: FileSystem.EncodingType.UTF8,
-    });
+    // Initialize target file in the cache directory
+    const csvFile = new File(Paths.cache, filename);
 
-    // Check availability
+    // Write text string to file
+    csvFile.write(csvData);
+
+    // Check device sharing availability
     const isAvailable = await Sharing.isAvailableAsync();
     if (!isAvailable) {
       Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
       return;
     }
 
-    // Open native OS share dialog
-    await Sharing.shareAsync(path, {
+    // Open native OS share dialog using file URI
+    await Sharing.shareAsync(csvFile.uri, {
       mimeType: 'text/csv',
       dialogTitle: `Attendance log for ${session.title || 'General Assembly'}`,
       UTI: 'public.comma-separated-values-text',
@@ -78,12 +78,12 @@ export const shareQRCode = async (base64Image, sessionTitle = 'General Assembly'
     // Strip data URL prefix if passed (e.g. "data:image/png;base64,...")
     const pureBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
     const filename = `QRCode_${Date.now()}.png`;
-    const path = `${FileSystem.cacheDirectory}${filename}`;
 
-    // Write base64 image data to temporary file
-    await FileSystem.writeAsStringAsync(path, pureBase64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+    // Initialize target image file in the cache directory
+    const imageFile = new File(Paths.cache, filename);
+
+    // Write raw base64 contents
+    imageFile.write(pureBase64);
 
     const isAvailable = await Sharing.isAvailableAsync();
     if (!isAvailable) {
@@ -91,7 +91,7 @@ export const shareQRCode = async (base64Image, sessionTitle = 'General Assembly'
       return;
     }
 
-    await Sharing.shareAsync(path, {
+    await Sharing.shareAsync(imageFile.uri, {
       mimeType: 'image/png',
       dialogTitle: `Share Check-In QR Code: ${sessionTitle}`,
       UTI: 'public.png',

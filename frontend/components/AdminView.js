@@ -10,7 +10,7 @@ import {
   ScrollView,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system/next';
 import * as Sharing from 'expo-sharing';
 import { QrCode, Users, RefreshCw, UserCheck, Share2, Download } from 'lucide-react-native';
 
@@ -199,18 +199,13 @@ export default function AdminView({ token }) {
           return;
         }
 
-        // Clean base64 string
         const pureBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
         const filename = `Assembly_QR_${Date.now()}.png`;
-        const localPath = `${FileSystem.cacheDirectory}${filename}`;
+        const qrFile = new File(Paths.cache, filename);
 
-        // Save image to cache directory
-        await FileSystem.writeAsStringAsync(localPath, pureBase64, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
+        qrFile.write(pureBase64);
 
-        // Open native share menu
-        await Sharing.shareAsync(localPath, {
+        await Sharing.shareAsync(qrFile.uri, {
           mimeType: 'image/png',
           dialogTitle: `Share Check-In QR Code: ${activeAssembly?.title || 'General Assembly'}`,
           UTI: 'public.png',
@@ -236,7 +231,6 @@ export default function AdminView({ token }) {
         return;
       }
 
-      // Build raw CSV String
       let csvContent = 'Index,Name,Email,CheckIn Time\n';
       attendees.forEach((item, idx) => {
         const time = new Date(item.timestamp || item.checkedInAt || Date.now()).toLocaleTimeString();
@@ -245,16 +239,12 @@ export default function AdminView({ token }) {
         csvContent += `"${idx + 1}","${name}","${email}","${time}"\n`;
       });
 
-      // Write File locally using Expo FileSystem
       const fileName = `Attendance_${activeAssembly?.title?.replace(/\s+/g, '_') || 'Assembly'}.csv`;
-      const localPath = `${FileSystem.cacheDirectory}${fileName}`;
+      const csvFile = new File(Paths.cache, fileName);
 
-      await FileSystem.writeAsStringAsync(localPath, csvContent, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
+      csvFile.write(csvContent);
 
-      // Present Native Share Interface
-      await Sharing.shareAsync(localPath, {
+      await Sharing.shareAsync(csvFile.uri, {
         mimeType: 'text/csv',
         dialogTitle: `Attendance CSV for ${activeAssembly?.title || 'Assembly'}`,
         UTI: 'public.comma-separated-values-text',

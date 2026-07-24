@@ -142,7 +142,8 @@ const requireAdmin = (req, res, next) => {
 app.put('/api/users/push-token', authenticateToken, async (req, res) => {
   try {
     const { pushToken } = req.body;
-    await User.findByIdAndUpdate(req.user.id, { pushToken });
+    const userId = req.user.id || req.user._id;
+    await User.findByIdAndUpdate(userId, { pushToken });
     res.json({ message: 'Push token saved successfully' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update push token' });
@@ -252,28 +253,34 @@ app.delete('/api/admin/reject-user/:id', authenticateToken, requireAdmin, async 
   }
 });
 
-// Admin: Start a new General Assembly session
+// Admin: Start a new General Assembly session & generate QR payload
 app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (req, res) => {
   try {
     // Close prior active sessions
     await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
 
+    const hostUserId = req.user.id || req.user._id;
+
     const newSession = new AssemblySession({
       title: req.body.title || 'General Assembly',
-      hostId: req.user.id,
+      hostId: hostUserId,
       status: 'active',
       attendees: [],
     });
 
     await newSession.save();
 
+    const sessionIdStr = newSession._id.toString();
+
     res.status(201).json({
       message: 'Assembly session created',
       assembly: {
-        _id: newSession._id,
-        sessionId: newSession._id.toString(),
+        _id: sessionIdStr,
+        sessionId: sessionIdStr,
         title: newSession.title,
         status: newSession.status,
+        // Payloads formatted for QR Code Generators on the frontend
+        qrCodeValue: JSON.stringify({ sessionId: sessionIdStr, title: newSession.title }),
       },
     });
   } catch (err) {
@@ -328,7 +335,18 @@ app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
 // Members: Check into a session via QR Code scan
 app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
   try {
-    const { sessionId } = req.body;
+    let { sessionId } = req.body;
+
+    // Handle cases where the QR scanner passes a stringified JSON object
+    if (typeof sessionId === 'string' && sessionId.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(sessionId);
+        sessionId = parsed.sessionId || sessionId;
+      } catch (e) {
+        // Fallback to raw string if JSON parsing fails
+      }
+    }
+
     if (!sessionId) {
       return res.status(400).json({ error: 'Session ID is required for check-in' });
     }
@@ -338,15 +356,18 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Assembly session is either expired or invalid' });
     }
 
+    const currentUserId = req.user.id || req.user._id;
+
+    // Safe comparison checking to prevent undefined property errors
     const alreadyCheckedIn = session.attendees.some(
-      (a) => a.userId.toString() === req.user.id.toString()
+      (a) => a.userId && a.userId.toString() === currentUserId.toString()
     );
 
     if (alreadyCheckedIn) {
       return res.status(200).json({ message: 'You are already checked into this session!' });
     }
 
-    session.attendees.push({ userId: req.user.id, checkedInAt: new Date() });
+    session.attendees.push({ userId: currentUserId, checkedInAt: new Date() });
     await session.save();
 
     res.status(200).json({ message: 'Check-in successful! Attendance logged.' });
@@ -416,7 +437,7 @@ app.put('/api/posts/:id/like', authenticateToken, async (req, res) => {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    const userId = req.user.id;
+    const userId = req.user.id || req.user._id;
     const hasLiked = post.likes.includes(userId);
 
     if (hasLiked) {
@@ -442,9 +463,11 @@ app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
+    const userId = req.user.id || req.user._id;
+
     const newComment = {
       authorName: req.user.name || 'Builder',
-      authorId: req.user.id,
+      authorId: userId,
       text: text.trim(),
       parentId: parentId || null,
     };
@@ -463,7 +486,8 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    const isAuthor = post.authorName === req.user.name || post.authorId?.toString() === req.user.id;
+    const userId = req.user.id || req.user._id;
+    const isAuthor = post.authorName === req.user.name || post.authorId?.toString() === userId.toString();
     const isAdmin = req.user.role === 'admin';
 
     if (!isAuthor && !isAdmin) {
@@ -483,7 +507,9 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
 app.put('/api/users/profile', authenticateToken, async (req, res) => {
   try {
     const { name, currentPassword, newPassword } = req.body;
-    const user = await User.findById(req.user.id);
+    const userId = req.user.id || req.user._id;
+
+    const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     if (newPassword) {
@@ -514,7 +540,8 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
 // ==========================================
 app.get('/api/users/members', authenticateToken, async (req, res) => {
   try {
-    const members = await User.find({ role: { $ne: 'pending' }, _id: { $ne: req.user.id } }).select(
+    const userId = req.user.id || req.user._id;
+    const members = await User.find({ role: { $ne: 'pending' }, _id: { $ne: userId } }).select(
       'name email role _id'
     );
     res.json(members);
@@ -525,7 +552,8 @@ app.get('/api/users/members', authenticateToken, async (req, res) => {
 
 app.get('/api/conversations', authenticateToken, async (req, res) => {
   try {
-    const conversations = await Conversation.find({ participants: req.user.id })
+    const userId = req.user.id || req.user._id;
+    const conversations = await Conversation.find({ participants: userId })
       .populate('participants', 'name role email')
       .sort({ updatedAt: -1 });
     res.json(conversations);
@@ -537,24 +565,25 @@ app.get('/api/conversations', authenticateToken, async (req, res) => {
 app.post('/api/conversations', authenticateToken, async (req, res) => {
   try {
     const { recipientId, participantIds, isGroup, groupName } = req.body;
+    const userId = req.user.id || req.user._id;
 
     if (!isGroup) {
       let existingConv = await Conversation.findOne({
         isGroup: false,
-        participants: { $all: [req.user.id, recipientId], $size: 2 },
+        participants: { $all: [userId, recipientId], $size: 2 },
       }).populate('participants', 'name role email');
 
       if (existingConv) return res.json(existingConv);
 
       const newConv = new Conversation({
         isGroup: false,
-        participants: [req.user.id, recipientId],
+        participants: [userId, recipientId],
       });
       await newConv.save();
       return res.json(await newConv.populate('participants', 'name role email'));
     }
 
-    const allParticipants = Array.from(new Set([...participantIds, req.user.id]));
+    const allParticipants = Array.from(new Set([...participantIds, userId]));
     const newGroup = new Conversation({
       isGroup: true,
       groupName: groupName || 'New Group',
@@ -618,6 +647,8 @@ app.post('/api/events', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Title and Date are required.' });
     }
 
+    const userId = req.user.id || req.user._id;
+
     const newEvent = new Event({
       title,
       description,
@@ -625,15 +656,15 @@ app.post('/api/events', authenticateToken, async (req, res) => {
       time,
       location,
       category,
-      createdBy: req.user.id,
-      rsvps: [req.user.id],
+      createdBy: userId,
+      rsvps: [userId],
     });
 
     await newEvent.save();
 
     // Notify all members except creator
     const membersToNotify = await User.find({
-      _id: { $ne: req.user.id },
+      _id: { $ne: userId },
       pushToken: { $ne: null },
     }).select('pushToken');
 
@@ -659,8 +690,8 @@ app.put('/api/events/:id/rsvp', authenticateToken, async (req, res) => {
     const event = await Event.findById(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const userId = req.user.id;
-    const hasRsvped = event.rsvps.includes(userId);
+    const userId = (req.user.id || req.user._id).toString();
+    const hasRsvped = event.rsvps.some((id) => id.toString() === userId);
 
     if (hasRsvped) {
       event.rsvps = event.rsvps.filter((id) => id.toString() !== userId);
@@ -702,10 +733,11 @@ io.on('connection', (socket) => {
   socket.on('send_private_message', async (data) => {
     try {
       const { conversationId, text, senderId, senderName } = data;
+      const currentUserId = socket.user.id || socket.user._id;
 
       const newMessage = new ChatMessage({
         conversationId,
-        senderId: senderId || socket.user.id,
+        senderId: senderId || currentUserId,
         senderName: senderName || socket.user.name,
         text,
       });
@@ -721,7 +753,7 @@ io.on('connection', (socket) => {
 
       // Push notification for offline/background chat recipients
       const recipientsToNotify = conv.participants.filter(
-        (p) => p._id.toString() !== (senderId || socket.user.id) && p.pushToken
+        (p) => p._id.toString() !== (senderId || currentUserId).toString() && p.pushToken
       );
 
       const tokens = recipientsToNotify.map((p) => p.pushToken);
