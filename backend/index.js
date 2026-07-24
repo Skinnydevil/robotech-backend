@@ -11,6 +11,7 @@ const path = require('path');
 const multer = require('multer');
 const { Expo } = require('expo-server-sdk');
 
+const User = require('./User');
 const Post = require('./Post');
 const Conversation = require('./Conversation');
 const ChatMessage = require('./ChatMessage');
@@ -20,6 +21,11 @@ const app = express();
 const server = http.createServer(app);
 const expo = new Expo();
 
+// Increase JSON limit to handle base64 image strings if needed
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(cors());
+
 // Ensure local uploads directory exists on startup
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -27,9 +33,6 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 const io = new Server(server, { cors: { origin: '*' } });
-
-app.use(cors());
-app.use(express.json());
 
 // Serve uploaded media files statically
 app.use('/uploads', express.static(uploadsDir));
@@ -84,27 +87,6 @@ mongoose
   })
   .then(() => console.log('🔌 Connected securely to MongoDB Cloud Database'))
   .catch((err) => console.error('❌ Database connection failed:', err));
-
-const UserSchema = new mongoose.Schema(
-  {
-    name: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    inscriptionNumber: { type: String, required: true, unique: true, sparse: true },
-    dateOfBirth: { type: Date, required: false },
-    avatar: { type: String, default: null },
-    role: { 
-      type: String, 
-      enum: ['pending', 'member', 'admin', 'board', 'Pending', 'Member', 'Admin', 'Board'], 
-      default: 'pending' 
-    },
-    pushToken: { type: String, default: null },
-    tags: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Tag' }],
-  },
-  { timestamps: true }
-);
-
-const User = mongoose.model('User', UserSchema);
 
 // Tag Settings Schema
 const TagSettingsSchema = new mongoose.Schema(
@@ -905,9 +887,10 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
   }
 });
 
+// UPDATED PROFILE UPDATE ROUTE
 app.put('/api/users/profile', authenticateToken, upload.single('avatar'), async (req, res) => {
   try {
-    const { name, currentPassword, newPassword, tags } = req.body;
+    const { name, currentPassword, newPassword, tags, avatar } = req.body;
     const userId = req.user._id;
 
     const user = await User.findById(userId);
@@ -925,9 +908,14 @@ app.put('/api/users/profile', authenticateToken, upload.single('avatar'), async 
     }
 
     if (name && name.trim()) user.name = name.trim();
+
+    // Support both direct file uploads and base64/URL avatars in body
     if (req.file) {
       user.avatar = `/uploads/${req.file.filename}`;
+    } else if (avatar !== undefined) {
+      user.avatar = avatar;
     }
+
     if (tags) {
       try {
         user.tags = typeof tags === 'string' ? JSON.parse(tags) : tags;

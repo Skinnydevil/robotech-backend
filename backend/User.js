@@ -8,11 +8,13 @@ const UserSchema = new mongoose.Schema(
       required: true, 
       trim: true 
     },
-    avatar: { type: String, default: null },
-    // Add this field to your userSchema definition inside User.js
+    avatar: { 
+      type: String, 
+      default: null 
+    },
     tags: [{ 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'Tag' 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'Tag' 
     }],
     email: { 
       type: String, 
@@ -29,16 +31,21 @@ const UserSchema = new mongoose.Schema(
       type: String, 
       required: true, 
       unique: true, 
+      sparse: true,
       trim: true 
     },
     dateOfBirth: { 
       type: Date, 
-      required: true 
+      required: false 
     },
     role: { 
       type: String, 
-      enum: ['Member', 'Admin'], 
-      default: 'Member' 
+      enum: ['pending', 'member', 'admin', 'board', 'Pending', 'Member', 'Admin', 'Board'], 
+      default: 'pending' 
+    },
+    pushToken: { 
+      type: String, 
+      default: null 
     },
     isApproved: { 
       type: Boolean, 
@@ -50,4 +57,4 @@ const UserSchema = new mongoose.Schema(
   }
 );
 
-module.exports = mongoose.model('User', UserSchema);
+module.exports = mongoose.model('User', mongoose.models.User || UserSchema);
