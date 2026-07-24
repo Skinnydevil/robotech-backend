@@ -7,6 +7,7 @@ import {
   FlatList,
   Image,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -14,28 +15,42 @@ const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
 
 export default function FeedView({ user, token }) {
   const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [postText, setPostText] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
   const [activeCommentPostId, setActiveCommentPostId] = useState(null);
   const [commentText, setCommentText] = useState('');
 
+  const currentUserId = user?._id || user?.id;
+
   const fetchPosts = async () => {
     try {
+      setLoading(true);
       const res = await fetch(`${API_URL}/posts`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+        },
       });
+
       if (res.ok) {
         const data = await res.json();
-        setPosts(data);
+        setPosts(Array.isArray(data) ? data : []);
+      } else {
+        console.error('Failed fetching posts status:', res.status);
       }
     } catch (err) {
-      console.error('Failed fetching posts:', err);
+      console.error('Failed fetching posts error:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchPosts();
-  }, []);
+    if (token) {
+      fetchPosts();
+    }
+  }, [token]);
 
   const handlePickImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -64,10 +79,15 @@ export default function FeedView({ user, token }) {
       formData.append('authorName', user?.name || 'Member');
       formData.append('authorRole', user?.role || 'member');
       formData.append('category', 'General');
+      
+      // FIXED: Send the author ID so backend Mongoose schema properly links & populates user data
+      if (currentUserId) {
+        formData.append('author', currentUserId);
+      }
 
       if (selectedImage) {
         const uriParts = selectedImage.uri.split('.');
-        const fileType = uriParts[uriParts.length - 1];
+        const fileType = uriParts[uriParts.length - 1] || 'jpeg';
 
         formData.append('media', {
           uri: selectedImage.uri,
@@ -88,9 +108,13 @@ export default function FeedView({ user, token }) {
         setPostText('');
         setSelectedImage(null);
         fetchPosts();
+      } else {
+        const errData = await res.json();
+        Alert.alert('Error', errData.error || 'Failed to publish post');
       }
     } catch (err) {
       console.error('Failed creating post:', err);
+      Alert.alert('Error', 'Network error while creating post');
     }
   };
 
@@ -130,10 +154,11 @@ export default function FeedView({ user, token }) {
     setPosts((prevPosts) =>
       prevPosts.map((post) => {
         if (post._id === postId) {
-          const hasLiked = post.likes?.includes(user._id);
+          const likesList = post.likes || [];
+          const hasLiked = likesList.includes(currentUserId);
           const newLikes = hasLiked
-            ? post.likes.filter((id) => id !== user._id)
-            : [...(post.likes || []), user._id];
+            ? likesList.filter((id) => id !== currentUserId)
+            : [...likesList, currentUserId];
           return { ...post, likes: newLikes };
         }
         return post;
@@ -184,7 +209,6 @@ export default function FeedView({ user, token }) {
     return `${serverBaseUrl}${mediaUrl.startsWith('/') ? '' : '/'}${mediaUrl}`;
   };
 
-  // Helper component/function to render tag badges nicely
   const renderTagBadges = (tags) => {
     if (!tags || tags.length === 0) return null;
     return (
@@ -194,7 +218,7 @@ export default function FeedView({ user, token }) {
           const tagColor = typeof tag === 'object' && tag.color ? tag.color : '#3b82f6';
           return (
             <View
-              key={idx}
+              key={tag._id || idx}
               style={{
                 backgroundColor: `${tagColor}25`,
                 borderColor: `${tagColor}60`,
@@ -216,8 +240,17 @@ export default function FeedView({ user, token }) {
     <View className="flex-1 p-4 bg-[#05070a]">
       <FlatList
         data={posts}
-        keyExtractor={(item) => item._id}
+        keyExtractor={(item) => item._id || String(Math.random())}
         showsVerticalScrollIndicator={false}
+        refreshing={loading}
+        onRefresh={fetchPosts}
+        ListEmptyComponent={
+          !loading ? (
+            <View className="py-12 items-center">
+              <Text className="text-slate-400 font-medium text-sm">No posts found in feed.</Text>
+            </View>
+          ) : null
+        }
         ListHeaderComponent={
           <View className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-3xl mb-4 shadow-xl">
             <TextInput
@@ -264,15 +297,22 @@ export default function FeedView({ user, token }) {
           </View>
         }
         renderItem={({ item }) => {
-          const hasLiked = item.likes?.includes(user?._id);
+          const likesList = item.likes || [];
+          const hasLiked = likesList.includes(currentUserId);
           const fullMediaUrl = resolveImageUrl(item.mediaUrl);
-          
-          const isAuthor = item.authorName === user?.name || item.authorId === user?._id;
-          const isAdmin = user?.role === 'admin';
+
+          const authorObj = typeof item.author === 'object' ? item.author : null;
+          const authorName = authorObj?.name || item.authorName || 'Member';
+          const authorRole = authorObj?.role || item.authorRole || 'builder';
+
+          const isAuthor =
+            (authorObj?._id && authorObj._id === currentUserId) ||
+            item.authorName === user?.name ||
+            item.authorId === currentUserId;
+          const isAdmin = String(user?.role).toLowerCase() === 'admin';
           const canDelete = isAuthor || isAdmin;
 
-          // Pull user tags from populated author object (fallback to item.authorTags if structured differently)
-          const authorTags = item.author?.tags || item.authorTags || [];
+          const authorTags = authorObj?.tags || item.authorTags || [];
 
           return (
             <View className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-3xl mb-3 shadow-lg">
@@ -281,16 +321,15 @@ export default function FeedView({ user, token }) {
                 <View className="flex-row items-start gap-2">
                   <View className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 justify-center items-center mt-0.5">
                     <Text className="text-xs font-bold text-amber-400">
-                      {item.authorName?.[0]?.toUpperCase() || 'M'}
+                      {authorName[0]?.toUpperCase() || 'M'}
                     </Text>
                   </View>
                   <View>
-                    <Text className="text-white font-bold text-sm">{item.authorName || 'Member'}</Text>
+                    <Text className="text-white font-bold text-sm">{authorName}</Text>
                     <Text className="text-amber-500/80 text-[10px] uppercase font-semibold">
-                      {item.authorRole || 'builder'}
+                      {authorRole}
                     </Text>
-                    
-                    {/* Render Tags under Author Name */}
+
                     {renderTagBadges(authorTags)}
                   </View>
                 </View>
@@ -334,7 +373,7 @@ export default function FeedView({ user, token }) {
                   className="flex-row items-center gap-1.5 bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800/50 active:scale-95"
                 >
                   <Text className="text-xs">{hasLiked ? '❤️' : '🤍'}</Text>
-                  <Text className="text-slate-300 text-xs font-bold">{item.likes?.length || 0}</Text>
+                  <Text className="text-slate-300 text-xs font-bold">{likesList.length}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
