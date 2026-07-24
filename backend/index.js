@@ -268,14 +268,14 @@ app.delete('/api/admin/reject-user/:id', authenticateToken, requireAdmin, async 
   }
 });
 
-// Fetch all users (members and admins) for Role Management
+// Fetch all users (members and admins) for User Management
 app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const users = await User.find({ role: { $in: ['member', 'admin'] } }).select('-password');
     res.json(users);
   } catch (err) {
     console.error('Fetch admin users error:', err);
-    res.status(500).json({ error: 'Failed to load members for role management' });
+    res.status(500).json({ error: 'Failed to load members for management' });
   }
 });
 
@@ -308,6 +308,30 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
   } catch (err) {
     console.error('Update role error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE A USER (Admin Only)
+app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const targetUserId = req.params.userId;
+    const requesterId = req.user.id || req.user._id;
+
+    // Safety guard: Prevents admin from deleting themselves
+    if (targetUserId.toString() === requesterId.toString()) {
+      return res.status(400).json({ error: 'You cannot delete your own account from the admin panel.' });
+    }
+
+    const deletedUser = await User.findByIdAndDelete(targetUserId);
+
+    if (!deletedUser) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    res.json({ message: 'User account deleted successfully.' });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    res.status(500).json({ error: 'Failed to delete user.' });
   }
 });
 
@@ -345,7 +369,7 @@ app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (re
   }
 });
 
-// Close ALL currently active General Assembly sessions (Static route before dynamic :id)
+// Close ALL currently active General Assembly sessions
 app.put('/api/admin/assembly/close-active', authenticateToken, requireAdmin, async (req, res) => {
   try {
     await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
