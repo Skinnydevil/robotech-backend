@@ -22,6 +22,7 @@ import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   Menu,
   Settings,
@@ -34,6 +35,7 @@ import {
   Calendar as CalendarIcon,
   QrCode,
   X,
+  Hash,
 } from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
@@ -41,6 +43,7 @@ import ChatView from './components/ChatView';
 import FeedView from './components/FeedView';
 import CalendarView from './components/CalendarView';
 import SideMenu from './components/SideMenu';
+import { exportAttendanceCSV, shareQRCode } from './fileShareHelper';
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
 const SOCKET_URL = 'https://robotech-backend-bc05.onrender.com';
@@ -58,6 +61,9 @@ function MainAppContent() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inscriptionNumber, setInscriptionNumber] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState(new Date(2002, 0, 1));
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [authError, setAuthError] = useState('');
 
   // App Navigation & Drawer
@@ -128,22 +134,43 @@ function MainAppContent() {
     };
   }, [token]);
 
+  const handleDateChange = (event, selectedDate) => {
+    setShowDatePicker(Platform.OS === 'ios');
+    if (selectedDate) {
+      setDateOfBirth(selectedDate);
+    }
+  };
+
   const handleAuth = async () => {
     Keyboard.dismiss();
     setAuthError('');
+
     if (!email.trim() || !password) {
       setAuthError('Please fill in all required fields.');
       return;
     }
-    if (!isLogin && !name.trim()) {
-      setAuthError('Please enter your full name.');
-      return;
+
+    if (!isLogin) {
+      if (!name.trim()) {
+        setAuthError('Please enter your full name.');
+        return;
+      }
+      if (!inscriptionNumber.trim()) {
+        setAuthError('Please enter your inscription number.');
+        return;
+      }
     }
 
     const endpoint = isLogin ? '/auth/login' : '/auth/register';
     const payload = isLogin
       ? { email: email.trim(), password }
-      : { name: name.trim(), email: email.trim(), password };
+      : {
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          password,
+          inscriptionNumber: inscriptionNumber.trim(),
+          dateOfBirth: dateOfBirth.toISOString(),
+        };
 
     try {
       const res = await fetch(`${API_URL}${endpoint}`, {
@@ -169,6 +196,7 @@ function MainAppContent() {
         setName('');
         setEmail('');
         setPassword('');
+        setInscriptionNumber('');
         setAuthError('Registration submitted! Awaiting admin approval.');
       }
     } catch (err) {
@@ -311,7 +339,7 @@ function MainAppContent() {
     );
   }
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'Admin';
 
   return (
     <View className="flex-1 bg-slate-950">
@@ -366,6 +394,39 @@ function MainAppContent() {
                   onChangeText={setEmail}
                   className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
                 />
+
+                {!isLogin && (
+                  <>
+                    <TextInput
+                      placeholder="Inscription Number (e.g. 2300123)"
+                      placeholderTextColor="#475569"
+                      value={inscriptionNumber}
+                      onChangeText={setInscriptionNumber}
+                      keyboardType="numeric"
+                      className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
+                    />
+
+                    <TouchableOpacity
+                      onPress={() => setShowDatePicker(true)}
+                      className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-3.5 mb-3 flex-row items-center justify-between"
+                    >
+                      <Text className="text-slate-400 text-sm font-medium">
+                        Date of Birth: <Text className="text-white">{dateOfBirth.toLocaleDateString()}</Text>
+                      </Text>
+                      <CalendarIcon size={16} color="#f59e0b" />
+                    </TouchableOpacity>
+
+                    {showDatePicker && (
+                      <DateTimePicker
+                        value={dateOfBirth}
+                        mode="date"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        onChange={handleDateChange}
+                        maximumDate={new Date()}
+                      />
+                    )}
+                  </>
+                )}
 
                 <TextInput
                   placeholder="Password"
@@ -511,8 +572,19 @@ function MainAppContent() {
                   <TextInput
                     value={user?.email}
                     editable={false}
-                    className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-2"
+                    className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-3"
                   />
+
+                  {user?.inscriptionNumber && (
+                    <>
+                      <Text className="text-slate-400 text-xs mb-1.5 font-medium">Inscription Number</Text>
+                      <TextInput
+                        value={user?.inscriptionNumber}
+                        editable={false}
+                        className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-2"
+                      />
+                    </>
+                  )}
                 </View>
 
                 <View className="bg-slate-900 p-5 rounded-2xl border border-slate-800 mb-5">

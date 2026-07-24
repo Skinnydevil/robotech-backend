@@ -10,15 +10,13 @@ import {
   ScrollView,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import { File, Paths } from 'expo-file-system/next';
-import * as Sharing from 'expo-sharing';
-import { QrCode, Users, RefreshCw, UserCheck, Share2, Download } from 'lucide-react-native';
+import { QrCode, Users, RefreshCw, UserCheck, Share2, Download, Power } from 'lucide-react-native';
+import { exportAttendanceCSV, shareQRCode } from '../fileShareHelper'; // Adjust import path if file is in another directory
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
 
 export default function AdminView({ token }) {
-  // Navigation State between Dashboard Tabs
-  const [activeAdminTab, setActiveAdminTab] = useState('approvals'); // 'approvals' | 'assembly'
+  const [activeAdminTab, setActiveAdminTab] = useState('approvals');
 
   // --- USER APPROVAL STATES ---
   const [pendingUsers, setPendingUsers] = useState([]);
@@ -30,7 +28,6 @@ export default function AdminView({ token }) {
   const [attendees, setAttendees] = useState([]);
   const [loadingAssembly, setLoadingAssembly] = useState(false);
 
-  // Ref to target the SVG element for rendering base64 images
   const qrRef = useRef(null);
 
   // 1. FETCH PENDING USER APPROVALS
@@ -43,8 +40,6 @@ export default function AdminView({ token }) {
       if (res.ok) {
         const data = await res.json();
         setPendingUsers(data);
-      } else {
-        console.error('Failed to fetch pending users');
       }
     } catch (err) {
       console.error('Failed fetching pending users:', err);
@@ -53,7 +48,7 @@ export default function AdminView({ token }) {
     }
   };
 
-  // 2. FETCH ACTIVE ASSEMBLY SESSION (Restores session across logouts/restarts)
+  // 2. FETCH ACTIVE ASSEMBLY SESSION
   const checkActiveAssembly = async () => {
     try {
       const res = await fetch(`${API_URL}/assembly/session/active`, {
@@ -63,6 +58,8 @@ export default function AdminView({ token }) {
         const data = await res.json();
         if (data && data.status === 'active') {
           setActiveAssembly(data);
+        } else {
+          setActiveAssembly(null);
         }
       }
     } catch (err) {
@@ -75,7 +72,7 @@ export default function AdminView({ token }) {
     checkActiveAssembly();
   }, [token]);
 
-  // Approve User Handler
+  // Handle Approve User
   const handleApproveUser = async (userId) => {
     try {
       const res = await fetch(`${API_URL}/admin/approve-user/${userId}`, {
@@ -88,12 +85,11 @@ export default function AdminView({ token }) {
         Alert.alert('Error', 'Failed to approve user.');
       }
     } catch (err) {
-      console.error('Failed approving user:', err);
       Alert.alert('Error', 'Network error while approving user.');
     }
   };
 
-  // Reject User Handler
+  // Handle Reject User
   const handleRejectUser = (userId, userName) => {
     Alert.alert(
       'Reject Registration',
@@ -111,11 +107,8 @@ export default function AdminView({ token }) {
               });
               if (res.ok) {
                 setPendingUsers((prev) => prev.filter((user) => user._id !== userId));
-              } else {
-                Alert.alert('Error', 'Failed to reject user.');
               }
             } catch (err) {
-              console.error('Failed rejecting user:', err);
               Alert.alert('Error', 'Network error while rejecting user.');
             }
           },
@@ -124,7 +117,7 @@ export default function AdminView({ token }) {
     );
   };
 
-  // Host New General Assembly
+  // Start Assembly
   const handleStartAssembly = async () => {
     if (!assemblyName.trim()) {
       Alert.alert('Required', 'Please enter an assembly topic or title.');
@@ -157,7 +150,40 @@ export default function AdminView({ token }) {
     }
   };
 
-  // Fetch Live Assembly Attendees
+  // End Assembly Session
+  const handleCloseAssembly = () => {
+    Alert.alert(
+      'Close Assembly Session',
+      'Are you sure you want to end this session? Members will no longer be able to scan and check in.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Close Session',
+          style: 'destructive',
+          onPress: async () => {
+            const targetId = activeAssembly?._id || activeAssembly?.sessionId;
+            try {
+              const res = await fetch(`${API_URL}/admin/assembly/${targetId}/stop`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (res.ok) {
+                setActiveAssembly(null);
+                setAttendees([]);
+                Alert.alert('Session Ended', 'Assembly check-in session has been closed.');
+              } else {
+                Alert.alert('Error', 'Failed to close assembly session on server.');
+              }
+            } catch (err) {
+              Alert.alert('Error', 'Network error closing session.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Fetch Attendees
   const fetchAttendees = async () => {
     if (!activeAssembly?._id && !activeAssembly?.sessionId) return;
     const targetId = activeAssembly._id || activeAssembly.sessionId;
@@ -174,7 +200,6 @@ export default function AdminView({ token }) {
     }
   };
 
-  // Auto-refresh attendee list every 5 seconds when an assembly is active
   useEffect(() => {
     let interval;
     if (activeAssembly) {
@@ -184,80 +209,20 @@ export default function AdminView({ token }) {
     return () => clearInterval(interval);
   }, [activeAssembly]);
 
-  // --- EXPO SHARING IMPLEMENTATION FOR QR ---
+  // Handle Share QR
   const handleShareQR = () => {
     if (!qrRef.current) {
-      Alert.alert('Error', 'QR code image element is still loading.');
+      Alert.alert('Error', 'QR code element is loading.');
       return;
     }
-
-    qrRef.current.toDataURL(async (dataUrl) => {
-      try {
-        const isAvailable = await Sharing.isAvailableAsync();
-        if (!isAvailable) {
-          Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
-          return;
-        }
-
-        const pureBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
-        const filename = `Assembly_QR_${Date.now()}.png`;
-        const qrFile = new File(Paths.cache, filename);
-
-        qrFile.write(pureBase64);
-
-        await Sharing.shareAsync(qrFile.uri, {
-          mimeType: 'image/png',
-          dialogTitle: `Share Check-In QR Code: ${activeAssembly?.title || 'General Assembly'}`,
-          UTI: 'public.png',
-        });
-      } catch (err) {
-        console.error('Share Error:', err);
-        Alert.alert('Share Failed', 'Unable to share QR code image.');
-      }
+    qrRef.current.toDataURL((dataUrl) => {
+      shareQRCode(dataUrl, activeAssembly?.title);
     });
-  };
-
-  // --- EXPO FILE SYSTEM & SHARING IMPLEMENTATION FOR EXPORTING CSV ---
-  const handleExportCSV = async () => {
-    if (!attendees || attendees.length === 0) {
-      Alert.alert('No Attendees', 'There are no checked-in members to export.');
-      return;
-    }
-
-    try {
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (!isAvailable) {
-        Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
-        return;
-      }
-
-      let csvContent = 'Index,Name,Email,CheckIn Time\n';
-      attendees.forEach((item, idx) => {
-        const time = new Date(item.timestamp || item.checkedInAt || Date.now()).toLocaleTimeString();
-        const name = item.name || item.userId?.name || 'Member';
-        const email = item.email || item.userId?.email || '';
-        csvContent += `"${idx + 1}","${name}","${email}","${time}"\n`;
-      });
-
-      const fileName = `Attendance_${activeAssembly?.title?.replace(/\s+/g, '_') || 'Assembly'}.csv`;
-      const csvFile = new File(Paths.cache, fileName);
-
-      csvFile.write(csvContent);
-
-      await Sharing.shareAsync(csvFile.uri, {
-        mimeType: 'text/csv',
-        dialogTitle: `Attendance CSV for ${activeAssembly?.title || 'Assembly'}`,
-        UTI: 'public.comma-separated-values-text',
-      });
-    } catch (err) {
-      console.error('CSV Export Error:', err);
-      Alert.alert('Export Failed', 'Could not create or share the CSV document.');
-    }
   };
 
   return (
     <View className="flex-1 bg-[#05070a] p-4">
-      {/* Dashboard Top Navigation Sub-Bar */}
+      {/* Sub Navigation Bar */}
       <View className="flex-row bg-slate-900/80 p-1 rounded-xl mb-4 border border-slate-800">
         <TouchableOpacity
           onPress={() => setActiveAdminTab('approvals')}
@@ -322,9 +287,6 @@ export default function AdminView({ token }) {
                   <Text className="text-slate-400 text-sm font-semibold text-center">
                     No pending user approvals
                   </Text>
-                  <Text className="text-slate-600 text-xs mt-1 text-center">
-                    All registered builders have been cleared.
-                  </Text>
                 </View>
               }
               renderItem={({ item }) => (
@@ -332,9 +294,6 @@ export default function AdminView({ token }) {
                   <View className="flex-1 mr-3">
                     <Text className="text-white font-bold text-base">{item.name}</Text>
                     <Text className="text-slate-400 text-xs mt-0.5">{item.email}</Text>
-                    <Text className="text-amber-500/80 text-[10px] mt-1 uppercase font-semibold">
-                      Registered: {new Date(item.createdAt || Date.now()).toLocaleDateString()}
-                    </Text>
                   </View>
 
                   <View className="flex-row items-center gap-2">
@@ -347,7 +306,7 @@ export default function AdminView({ token }) {
 
                     <TouchableOpacity
                       onPress={() => handleApproveUser(item._id)}
-                      className="bg-amber-500 px-3 py-2.5 rounded-xl active:scale-95 shadow-md shadow-amber-500/20"
+                      className="bg-amber-500 px-3 py-2.5 rounded-xl active:scale-95"
                     >
                       <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">
                         Approve
@@ -361,7 +320,7 @@ export default function AdminView({ token }) {
         </View>
       )}
 
-      {/* --- TAB 2: GENERAL ASSEMBLY QR HOSTING --- */}
+      {/* --- TAB 2: GENERAL ASSEMBLY --- */}
       {activeAdminTab === 'assembly' && (
         <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
           <Text className="text-white font-black text-lg tracking-wide mb-0.5">⚡ General Assembly Host</Text>
@@ -370,9 +329,6 @@ export default function AdminView({ token }) {
           {!activeAssembly ? (
             <View className="bg-[#0b0f19] p-5 rounded-2xl border border-slate-800">
               <Text className="text-slate-200 font-bold text-sm mb-2">Start Assembly Session</Text>
-              <Text className="text-slate-400 text-xs mb-3">
-                Create a session for members to scan with their mobile app in the meeting room.
-              </Text>
 
               <TextInput
                 placeholder="Session Name (e.g. GA #4 - Weekly Build Review)"
@@ -385,7 +341,7 @@ export default function AdminView({ token }) {
               <TouchableOpacity
                 onPress={handleStartAssembly}
                 disabled={loadingAssembly}
-                className="bg-amber-500 py-3.5 rounded-xl items-center flex-row justify-center gap-2 active:scale-95 shadow-md shadow-amber-500/20"
+                className="bg-amber-500 py-3.5 rounded-xl items-center flex-row justify-center gap-2 active:scale-95"
               >
                 {loadingAssembly ? (
                   <ActivityIndicator color="#0f172a" />
@@ -429,7 +385,7 @@ export default function AdminView({ token }) {
                 </Text>
               </TouchableOpacity>
 
-              {/* Attendance Tracker */}
+              {/* Attendance Tracker Bar */}
               <View className="w-full flex-row justify-between items-center mb-3">
                 <View className="flex-row items-center gap-2">
                   <Users size={16} color="#f59e0b" />
@@ -443,9 +399,8 @@ export default function AdminView({ token }) {
                     <RefreshCw size={14} color="#94a3b8" />
                   </TouchableOpacity>
 
-                  {/* CSV Export Button */}
                   <TouchableOpacity
-                    onPress={handleExportCSV}
+                    onPress={() => exportAttendanceCSV({ ...activeAssembly, attendees })}
                     className="bg-emerald-950/60 border border-emerald-700/60 px-2.5 py-1 rounded-lg flex-row items-center gap-1.5 active:scale-95"
                   >
                     <Download size={12} color="#34d399" />
@@ -456,6 +411,7 @@ export default function AdminView({ token }) {
                 </View>
               </View>
 
+              {/* Attendee List */}
               <View className="w-full bg-slate-950 rounded-xl p-3 border border-slate-800 max-h-56">
                 {attendees.length === 0 ? (
                   <Text className="text-slate-500 text-xs text-center py-6 font-medium">
@@ -477,12 +433,14 @@ export default function AdminView({ token }) {
                 )}
               </View>
 
+              {/* Close Assembly Session Action Button */}
               <TouchableOpacity
-                onPress={() => setActiveAssembly(null)}
-                className="mt-5 bg-slate-800 py-3 px-6 rounded-xl border border-slate-700 active:scale-95"
+                onPress={handleCloseAssembly}
+                className="mt-5 w-full bg-rose-950/80 border border-rose-800/80 py-3.5 px-6 rounded-xl flex-row items-center justify-center gap-2 active:scale-95"
               >
-                <Text className="text-slate-300 font-bold text-xs uppercase tracking-wider">
-                  Hide Display Panel
+                <Power size={16} color="#f43f5e" />
+                <Text className="text-rose-400 font-bold text-xs uppercase tracking-wider">
+                  Close & End Session
                 </Text>
               </TouchableOpacity>
             </View>

@@ -1,10 +1,9 @@
-import { File, Paths } from 'expo-file-system/next';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Alert } from 'react-native';
 
 /**
  * Creates a CSV file of session attendees and opens the native share menu.
- * @param {Object} session - The active assembly session object (must contain an attendees array).
  */
 export const exportAttendanceCSV = async (session) => {
   try {
@@ -13,7 +12,6 @@ export const exportAttendanceCSV = async (session) => {
       return;
     }
 
-    // Build CSV Header & Rows with fallback data resolution
     const csvHeader = 'Index,Name,Email,Checked-In At\n';
     const csvRows = session.attendees
       .map((item, idx) => {
@@ -22,7 +20,6 @@ export const exportAttendanceCSV = async (session) => {
         const rawDate = item.timestamp || item.checkedInAt;
         const date = rawDate ? new Date(rawDate).toLocaleString() : 'N/A';
 
-        // Escape double quotes inside names or emails to prevent CSV corruption
         const safeName = name.replace(/"/g, '""');
         const safeEmail = email.replace(/"/g, '""');
 
@@ -31,28 +28,23 @@ export const exportAttendanceCSV = async (session) => {
       .join('\n');
 
     const csvData = csvHeader + csvRows;
-
-    // Sanitize session title for file naming
     const sanitizedTitle = (session.title || 'Assembly')
       .replace(/[^a-zA-Z0-9_-]/g, '_')
       .toLowerCase();
     const filename = `Attendance_${sanitizedTitle}_${Date.now()}.csv`;
+    const localPath = `${FileSystem.cacheDirectory}${filename}`;
 
-    // Initialize target file in the cache directory
-    const csvFile = new File(Paths.cache, filename);
+    await FileSystem.writeAsStringAsync(localPath, csvData, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
 
-    // Write text string to file
-    csvFile.write(csvData);
-
-    // Check device sharing availability
     const isAvailable = await Sharing.isAvailableAsync();
     if (!isAvailable) {
       Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
       return;
     }
 
-    // Open native OS share dialog using file URI
-    await Sharing.shareAsync(csvFile.uri, {
+    await Sharing.shareAsync(localPath, {
       mimeType: 'text/csv',
       dialogTitle: `Attendance log for ${session.title || 'General Assembly'}`,
       UTI: 'public.comma-separated-values-text',
@@ -64,9 +56,7 @@ export const exportAttendanceCSV = async (session) => {
 };
 
 /**
- * Saves a base64 image string to temporary cache and opens the share menu.
- * @param {string} base64Image - The raw or dataURL base64 string from the QR code component.
- * @param {string} sessionTitle - Title of the assembly session for the dialog header.
+ * Saves a base64 image string to temporary cache and opens the share menu with file URI.
  */
 export const shareQRCode = async (base64Image, sessionTitle = 'General Assembly') => {
   try {
@@ -75,15 +65,13 @@ export const shareQRCode = async (base64Image, sessionTitle = 'General Assembly'
       return;
     }
 
-    // Strip data URL prefix if passed (e.g. "data:image/png;base64,...")
     const pureBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
-    const filename = `QRCode_${Date.now()}.png`;
+    const filename = `Assembly_QR_${Date.now()}.png`;
+    const localPath = `${FileSystem.cacheDirectory}${filename}`;
 
-    // Initialize target image file in the cache directory
-    const imageFile = new File(Paths.cache, filename);
-
-    // Write raw base64 contents
-    imageFile.write(pureBase64);
+    await FileSystem.writeAsStringAsync(localPath, pureBase64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
 
     const isAvailable = await Sharing.isAvailableAsync();
     if (!isAvailable) {
@@ -91,7 +79,7 @@ export const shareQRCode = async (base64Image, sessionTitle = 'General Assembly'
       return;
     }
 
-    await Sharing.shareAsync(imageFile.uri, {
+    await Sharing.shareAsync(localPath, {
       mimeType: 'image/png',
       dialogTitle: `Share Check-In QR Code: ${sessionTitle}`,
       UTI: 'public.png',

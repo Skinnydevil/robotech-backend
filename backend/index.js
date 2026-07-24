@@ -90,6 +90,8 @@ const UserSchema = new mongoose.Schema(
     name: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
+    inscriptionNumber: { type: String, required: true, unique: true, sparse: true },
+    dateOfBirth: { type: Date, required: false },
     role: { type: String, enum: ['pending', 'member', 'admin'], default: 'pending' },
     pushToken: { type: String, default: null },
   },
@@ -155,11 +157,20 @@ app.put('/api/users/push-token', authenticateToken, async (req, res) => {
 // ==========================================
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, inscriptionNumber, dateOfBirth } = req.body;
+
+    if (!inscriptionNumber) {
+      return res.status(400).json({ error: 'Inscription number is required.' });
+    }
 
     const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
     if (existingUser) {
       return res.status(400).json({ error: 'Email is already registered' });
+    }
+
+    const existingInscription = await User.findOne({ inscriptionNumber: inscriptionNumber.trim() });
+    if (existingInscription) {
+      return res.status(400).json({ error: 'Inscription number is already in use.' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -168,6 +179,8 @@ app.post('/api/auth/register', async (req, res) => {
       name,
       email: email.toLowerCase().trim(),
       password: hashedPassword,
+      inscriptionNumber: inscriptionNumber.trim(),
+      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
       role: 'pending',
     });
 
@@ -210,6 +223,8 @@ app.post('/api/auth/login', async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        inscriptionNumber: user.inscriptionNumber,
+        dateOfBirth: user.dateOfBirth,
       },
     });
   } catch (error) {
@@ -279,7 +294,6 @@ app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (re
         sessionId: sessionIdStr,
         title: newSession.title,
         status: newSession.status,
-        // Payloads formatted for QR Code Generators on the frontend
         qrCodeValue: JSON.stringify({ sessionId: sessionIdStr, title: newSession.title }),
       },
     });
@@ -294,7 +308,7 @@ app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, as
   try {
     const session = await AssemblySession.findById(req.params.id).populate(
       'attendees.userId',
-      'name email'
+      'name email inscriptionNumber'
     );
 
     if (!session) {
@@ -305,6 +319,7 @@ app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, as
       _id: item._id,
       name: item.userId?.name || 'Member',
       email: item.userId?.email || '',
+      inscriptionNumber: item.userId?.inscriptionNumber || 'N/A',
       timestamp: item.checkedInAt,
     }));
 
@@ -324,7 +339,7 @@ app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
   try {
     const activeSession = await AssemblySession.findOne({ status: 'active' }).populate(
       'attendees.userId',
-      'name email'
+      'name email inscriptionNumber'
     );
     res.json(activeSession || null);
   } catch (err) {
@@ -337,7 +352,6 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
   try {
     let { sessionId } = req.body;
 
-    // Handle cases where the QR scanner passes a stringified JSON object
     if (typeof sessionId === 'string' && sessionId.trim().startsWith('{')) {
       try {
         const parsed = JSON.parse(sessionId);
@@ -358,7 +372,6 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
 
     const currentUserId = req.user.id || req.user._id;
 
-    // Safe comparison checking to prevent undefined property errors
     const alreadyCheckedIn = session.attendees.some(
       (a) => a.userId && a.userId.toString() === currentUserId.toString()
     );
@@ -381,7 +394,7 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
 app.get('/api/assembly/sessions', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const sessions = await AssemblySession.find()
-      .populate('attendees.userId', 'name email')
+      .populate('attendees.userId', 'name email inscriptionNumber')
       .sort({ createdAt: -1 });
     res.json(sessions);
   } catch (err) {
@@ -528,7 +541,14 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
 
     res.json({
       message: 'Profile updated successfully',
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role },
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        inscriptionNumber: user.inscriptionNumber,
+        dateOfBirth: user.dateOfBirth,
+      },
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update profile' });
@@ -542,7 +562,7 @@ app.get('/api/users/members', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id || req.user._id;
     const members = await User.find({ role: { $ne: 'pending' }, _id: { $ne: userId } }).select(
-      'name email role _id'
+      'name email role _id inscriptionNumber'
     );
     res.json(members);
   } catch (err) {
