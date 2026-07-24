@@ -8,19 +8,24 @@ import {
   Alert,
   ActivityIndicator,
   Keyboard,
+  Switch,
 } from 'react-native';
-import { Tag, Plus, Trash2, RefreshCw } from 'lucide-react-native';
+import { Tag, Plus, Trash2, RefreshCw, Palette } from 'lucide-react-native';
 
 const API_BASE_URL = 'https://robotech-backend-bc05.onrender.com/api';
+
+const PRESET_COLORS = ['#f59e0b', '#34d399', '#60a5fa', '#f43f5e', '#a78bfa', '#fb923c'];
 
 export default function TagManagementScreen({ token }) {
   const [tags, setTags] = useState([]);
   const [tagName, setTagName] = useState('');
+  const [tagColor, setTagColor] = useState('#f59e0b');
+  const [allowPublicCreation, setAllowPublicCreation] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [updatingSettings, setUpdatingSettings] = useState(false);
 
-  // Fetch all tags from backend
-  const fetchTags = async () => {
+  const fetchTagsAndSettings = async () => {
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/tags`, {
@@ -44,6 +49,15 @@ export default function TagManagementScreen({ token }) {
       } else {
         Alert.alert('Error', data.error || data.message || `Failed to fetch tags (${response.status})`);
       }
+
+      // Fetch tag policy/settings
+      const settingsRes = await fetch(`${API_BASE_URL}/tags/settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json();
+        setAllowPublicCreation(!!settingsData.allowPublicCreation);
+      }
     } catch (error) {
       console.error('Fetch Tags Error:', error);
       Alert.alert('Network Error', 'Could not connect to server.');
@@ -53,10 +67,33 @@ export default function TagManagementScreen({ token }) {
   };
 
   useEffect(() => {
-    fetchTags();
+    fetchTagsAndSettings();
   }, []);
 
-  // Add a new tag
+  const handleTogglePublicCreation = async (value) => {
+    setAllowPublicCreation(value);
+    setUpdatingSettings(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/tags/settings`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ allowPublicCreation: value }),
+      });
+      if (!response.ok) {
+        Alert.alert('Error', 'Failed to update tag creation policy.');
+        setAllowPublicCreation(!value); // Revert on failure
+      }
+    } catch (error) {
+      Alert.alert('Network Error', 'Could not update tag settings.');
+      setAllowPublicCreation(!value);
+    } finally {
+      setUpdatingSettings(false);
+    }
+  };
+
   const handleAddTag = async () => {
     const trimmedName = tagName.trim();
     if (!trimmedName) {
@@ -68,33 +105,26 @@ export default function TagManagementScreen({ token }) {
     setSubmitting(true);
 
     try {
-      console.log('Sending Add Tag Request:', trimmedName);
-
       const response = await fetch(`${API_BASE_URL}/tags`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ name: trimmedName }),
+        body: JSON.stringify({ name: trimmedName, color: tagColor }),
       });
 
       const rawText = await response.text();
-      console.log('Add Tag HTTP Status:', response.status);
-      console.log('Add Tag Server Response:', rawText);
-
       let data = {};
       try {
         data = JSON.parse(rawText);
-      } catch (e) {
-        console.error('Add tag response was not valid JSON:', rawText);
-      }
+      } catch (e) {}
 
       if (response.ok) {
         setTagName('');
-        fetchTags();
+        setTagColor('#f59e0b');
+        fetchTagsAndSettings();
       } else {
-        // Display precise error returned from Express
         const errorMessage =
           data.error ||
           data.message ||
@@ -102,14 +132,12 @@ export default function TagManagementScreen({ token }) {
         Alert.alert('Error', errorMessage);
       }
     } catch (error) {
-      console.error('Add Tag Exception:', error);
       Alert.alert('Network Error', 'Could not create tag.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Delete tag with confirmation
   const handleDeleteTag = (id, name) => {
     Alert.alert(
       'Delete Tag',
@@ -129,7 +157,7 @@ export default function TagManagementScreen({ token }) {
               });
 
               if (response.ok) {
-                fetchTags();
+                fetchTagsAndSettings();
               } else {
                 const rawText = await response.text();
                 let data = {};
@@ -139,7 +167,6 @@ export default function TagManagementScreen({ token }) {
                 Alert.alert('Error', data.error || data.message || 'Failed to delete tag.');
               }
             } catch (error) {
-              console.error('Delete Tag Error:', error);
               Alert.alert('Network Error', 'Could not delete tag.');
             }
           },
@@ -150,27 +177,40 @@ export default function TagManagementScreen({ token }) {
 
   return (
     <View className="flex-1 bg-slate-950 p-5">
-      {/* Header */}
       <View className="flex-row justify-between items-center mb-4">
         <View>
           <Text className="text-amber-500 font-black text-xl tracking-wider uppercase">
             Tag Management
           </Text>
           <Text className="text-slate-400 text-xs">
-            Create and organize tags for posts & members
+            Create and organize tags, colors & permissions
           </Text>
         </View>
 
         <TouchableOpacity
-          onPress={fetchTags}
+          onPress={fetchTagsAndSettings}
           className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl"
         >
           <RefreshCw size={16} color="#94a3b8" />
         </TouchableOpacity>
       </View>
 
+      {/* Admin Setting: Public Creation Toggle */}
+      <View className="bg-slate-900 p-4 rounded-2xl border border-slate-800 mb-4 flex-row justify-between items-center">
+        <View className="flex-1 mr-3">
+          <Text className="text-white font-bold text-xs uppercase tracking-wider">Public Tag Creation</Text>
+          <Text className="text-slate-400 text-[10px] mt-0.5">Allow standard members to create their own tags</Text>
+        </View>
+        <Switch
+          value={allowPublicCreation}
+          onValueChange={handleTogglePublicCreation}
+          trackColor={{ false: '#334155', true: '#f59e0b' }}
+          thumbColor="#ffffff"
+        />
+      </View>
+
       {/* Tag Input Form */}
-      <View className="bg-slate-900 p-4 rounded-2xl border border-slate-800 mb-5 flex-row items-center gap-2">
+      <View className="bg-slate-900 p-4 rounded-2xl border border-slate-800 mb-5">
         <TextInput
           placeholder="New tag name..."
           placeholderTextColor="#475569"
@@ -178,21 +218,36 @@ export default function TagManagementScreen({ token }) {
           onChangeText={setTagName}
           autoCapitalize="none"
           autoCorrect={false}
-          className="flex-1 bg-slate-950 text-white px-4 py-3 rounded-xl border border-slate-800 text-sm font-medium"
+          className="bg-slate-950 text-white px-4 py-3 rounded-xl border border-slate-800 text-sm font-medium mb-3"
         />
 
+        <View className="flex-row items-center justify-between mb-4">
+          <Text className="text-slate-400 text-xs font-semibold">Choose Tag Color:</Text>
+          <View className="flex-row gap-2">
+            {PRESET_COLORS.map((color) => (
+              <TouchableOpacity
+                key={color}
+                onPress={() => setTagColor(color)}
+                style={{ backgroundColor: color }}
+                className={`w-6 h-6 rounded-full ${tagColor === color ? 'border-2 border-white' : ''}`}
+              />
+            ))}
+          </View>
+        </View>
+
         <TouchableOpacity
+          onResponse={handleAddTag}
           onPress={handleAddTag}
           disabled={submitting}
           activeOpacity={0.8}
-          className="bg-amber-500 p-3.5 rounded-xl justify-center items-center flex-row gap-1"
+          className="bg-amber-500 py-3.5 rounded-xl justify-center items-center flex-row gap-1"
         >
           {submitting ? (
             <ActivityIndicator size="small" color="#0f172a" />
           ) : (
             <>
               <Plus size={18} color="#0f172a" />
-              <Text className="text-slate-950 font-black text-xs uppercase">Add</Text>
+              <Text className="text-slate-950 font-black text-xs uppercase">Create Tag</Text>
             </>
           )}
         </TouchableOpacity>
@@ -219,8 +274,11 @@ export default function TagManagementScreen({ token }) {
           renderItem={({ item }) => (
             <View className="bg-slate-900 border border-slate-800/80 p-4 rounded-xl mb-2.5 flex-row justify-between items-center">
               <View className="flex-row items-center gap-2.5">
-                <View className="p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-                  <Tag size={14} color="#f59e0b" />
+                <View 
+                  style={{ backgroundColor: `${item.color || '#f59e0b'}20`, borderColor: `${item.color || '#f59e0b'}50` }} 
+                  className="p-2 border rounded-lg"
+                >
+                  <Tag size={14} color={item.color || '#f59e0b'} />
                 </View>
                 <Text className="text-slate-200 font-bold text-sm tracking-wide">
                   {item.name}

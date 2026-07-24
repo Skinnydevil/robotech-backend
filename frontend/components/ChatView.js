@@ -127,6 +127,7 @@ export default function ChatView({ user, token, socket }) {
       text: textToSend,
       senderId: user._id,
       senderName: user.name,
+      senderTags: user.tags || [],
       createdAt: new Date().toISOString(),
     };
 
@@ -139,6 +140,7 @@ export default function ChatView({ user, token, socket }) {
       text: textToSend,
       senderId: user._id,
       senderName: user.name,
+      senderTags: user.tags || [],
     });
   };
 
@@ -170,13 +172,48 @@ export default function ChatView({ user, token, socket }) {
     }
   };
 
+  const getOtherUser = (conv) => {
+    return conv.participants?.find((p) => p._id?.toString() !== user._id?.toString());
+  };
+
+  // Helper component/function to render tag badges nicely
+  const renderTagBadges = (tags) => {
+    if (!tags || tags.length === 0) return null;
+    return (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
+        {tags.map((tag, idx) => {
+          const tagName = typeof tag === 'object' ? tag.name : 'Tag';
+          const tagColor = typeof tag === 'object' && tag.color ? tag.color : '#3b82f6';
+          return (
+            <View
+              key={idx}
+              style={{
+                backgroundColor: `${tagColor}25`,
+                borderColor: `${tagColor}60`,
+                borderWidth: 1,
+                paddingHorizontal: 6,
+                paddingVertical: 1,
+                borderRadius: 6,
+              }}
+            >
+              <Text style={{ color: tagColor, fontSize: 9, fontWeight: '700' }}>{tagName}</Text>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const getChatTitle = (conv) => {
     if (conv.isGroup) return `👥 ${conv.groupName}`;
-    const otherUser = conv.participants?.find((p) => p._id !== user._id);
+    const otherUser = getOtherUser(conv);
     return `👤 ${otherUser?.name || 'Member'}`;
   };
 
   if (activeConv) {
+    const otherUser = !activeConv.isGroup ? getOtherUser(activeConv) : null;
+    const headerTags = otherUser?.tags || activeConv.otherUserTags || [];
+
     return (
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -193,9 +230,12 @@ export default function ChatView({ user, token, socket }) {
           >
             <Text className="text-amber-400 font-bold text-xs">← Inbox</Text>
           </TouchableOpacity>
-          <Text className="text-white font-bold text-base flex-1" numberOfLines={1}>
-            {getChatTitle(activeConv)}
-          </Text>
+          <View className="flex-1">
+            <Text className="text-white font-bold text-base" numberOfLines={1}>
+              {activeConv.isGroup ? `👥 ${activeConv.groupName}` : `👤 ${otherUser?.name || 'Member'}`}
+            </Text>
+            {!activeConv.isGroup && renderTagBadges(headerTags)}
+          </View>
         </View>
 
         <FlatList
@@ -206,13 +246,17 @@ export default function ChatView({ user, token, socket }) {
           onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
           renderItem={({ item }) => {
             const isMe = item.senderId?.toString() === user._id?.toString();
+            const senderTags = item.senderTags || item.sender?.tags || [];
 
             return (
               <View className={`mb-3 flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                 {!isMe && (
-                  <Text className="text-slate-500 text-[10px] mb-1 font-medium px-1">
-                    {item.senderName}
-                  </Text>
+                  <View className="mb-1 px-1">
+                    <Text className="text-slate-500 text-[10px] font-medium">
+                      {item.senderName}
+                    </Text>
+                    {renderTagBadges(senderTags)}
+                  </View>
                 )}
                 <View
                   className={`max-w-[80%] px-4 py-3 rounded-2xl ${
@@ -280,20 +324,26 @@ export default function ChatView({ user, token, socket }) {
             </Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            onPress={() => setActiveConv(item)}
-            className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-2xl mb-2.5 flex-row justify-between items-center shadow-md active:bg-slate-900"
-          >
-            <View className="flex-1 mr-2">
-              <Text className="text-white font-bold text-base">{getChatTitle(item)}</Text>
-              <Text className="text-slate-400 text-xs mt-1 font-normal" numberOfLines={1}>
-                {item.lastMessage || 'No messages yet'}
-              </Text>
-            </View>
-            <Text className="text-slate-600 text-xl font-bold">›</Text>
-          </TouchableOpacity>
-        )}
+        renderItem={({ item }) => {
+          const otherUser = !item.isGroup ? getOtherUser(item) : null;
+          const convTags = otherUser?.tags || item.otherUserTags || [];
+
+          return (
+            <TouchableOpacity
+              onPress={() => setActiveConv(item)}
+              className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-2xl mb-2.5 flex-row justify-between items-center shadow-md active:bg-slate-900"
+            >
+              <View className="flex-1 mr-2">
+                <Text className="text-white font-bold text-base">{getChatTitle(item)}</Text>
+                {!item.isGroup && renderTagBadges(convTags)}
+                <Text className="text-slate-400 text-xs mt-1 font-normal" numberOfLines={1}>
+                  {item.lastMessage || 'No messages yet'}
+                </Text>
+              </View>
+              <Text className="text-slate-600 text-xl font-bold">›</Text>
+            </TouchableOpacity>
+          );
+        }}
       />
 
       <Modal visible={showModal} animationType="slide" transparent>
@@ -373,9 +423,10 @@ export default function ChatView({ user, token, socket }) {
                     isSelected ? 'bg-amber-500/20 border-amber-500/80' : 'bg-[#0b0f19] border-slate-800/80'
                   }`}
                 >
-                  <View>
+                  <View className="flex-1 mr-2">
                     <Text className="text-white font-bold text-sm">{item.name}</Text>
                     <Text className="text-slate-400 text-xs">{item.email}</Text>
+                    {renderTagBadges(item.tags)}
                   </View>
                   {!isCreatingGroup && <Text className="text-amber-400 font-bold text-xs">Message →</Text>}
                   {isCreatingGroup && <Text className="text-base">{isSelected ? '✅' : '⚪'}</Text>}

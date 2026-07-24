@@ -111,7 +111,6 @@ export default function FeedView({ user, token }) {
               });
 
               if (res.ok) {
-                // Optimistically remove from state
                 setPosts((prev) => prev.filter((p) => p._id !== postId));
               } else {
                 const data = await res.json();
@@ -128,7 +127,6 @@ export default function FeedView({ user, token }) {
   };
 
   const handleToggleLike = async (postId) => {
-    // Optimistic UI Update
     setPosts((prevPosts) =>
       prevPosts.map((post) => {
         if (post._id === postId) {
@@ -148,7 +146,7 @@ export default function FeedView({ user, token }) {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
-        fetchPosts(); // Revert on fail
+        fetchPosts();
       }
     } catch (err) {
       console.error('Failed toggling like:', err);
@@ -184,6 +182,34 @@ export default function FeedView({ user, token }) {
     if (mediaUrl.startsWith('http')) return mediaUrl;
     const serverBaseUrl = API_URL.replace('/api', '');
     return `${serverBaseUrl}${mediaUrl.startsWith('/') ? '' : '/'}${mediaUrl}`;
+  };
+
+  // Helper component/function to render tag badges nicely
+  const renderTagBadges = (tags) => {
+    if (!tags || tags.length === 0) return null;
+    return (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
+        {tags.map((tag, idx) => {
+          const tagName = typeof tag === 'object' ? tag.name : 'Tag';
+          const tagColor = typeof tag === 'object' && tag.color ? tag.color : '#3b82f6';
+          return (
+            <View
+              key={idx}
+              style={{
+                backgroundColor: `${tagColor}25`,
+                borderColor: `${tagColor}60`,
+                borderWidth: 1,
+                paddingHorizontal: 6,
+                paddingVertical: 1,
+                borderRadius: 6,
+              }}
+            >
+              <Text style={{ color: tagColor, fontSize: 9, fontWeight: '700' }}>{tagName}</Text>
+            </View>
+          );
+        })}
+      </View>
+    );
   };
 
   return (
@@ -241,17 +267,19 @@ export default function FeedView({ user, token }) {
           const hasLiked = item.likes?.includes(user?._id);
           const fullMediaUrl = resolveImageUrl(item.mediaUrl);
           
-          // Check ownership or admin status
           const isAuthor = item.authorName === user?.name || item.authorId === user?._id;
           const isAdmin = user?.role === 'admin';
           const canDelete = isAuthor || isAdmin;
 
+          // Pull user tags from populated author object (fallback to item.authorTags if structured differently)
+          const authorTags = item.author?.tags || item.authorTags || [];
+
           return (
             <View className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-3xl mb-3 shadow-lg">
               {/* Header */}
-              <View className="flex-row justify-between items-center mb-2.5">
-                <View className="flex-row items-center gap-2">
-                  <View className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 justify-center items-center">
+              <View className="flex-row justify-between items-start mb-2.5">
+                <View className="flex-row items-start gap-2">
+                  <View className="w-7 h-7 rounded-full bg-amber-500/10 border border-amber-500/30 justify-center items-center mt-0.5">
                     <Text className="text-xs font-bold text-amber-400">
                       {item.authorName?.[0]?.toUpperCase() || 'M'}
                     </Text>
@@ -261,6 +289,9 @@ export default function FeedView({ user, token }) {
                     <Text className="text-amber-500/80 text-[10px] uppercase font-semibold">
                       {item.authorRole || 'builder'}
                     </Text>
+                    
+                    {/* Render Tags under Author Name */}
+                    {renderTagBadges(authorTags)}
                   </View>
                 </View>
 
@@ -269,7 +300,6 @@ export default function FeedView({ user, token }) {
                     {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'Recently'}
                   </Text>
 
-                  {/* Conditional Delete Button */}
                   {canDelete && (
                     <TouchableOpacity
                       onPress={() => handleDeletePost(item._id)}

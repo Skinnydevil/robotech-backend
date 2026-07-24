@@ -5,6 +5,7 @@ const tagSchema = new mongoose.Schema({
   color: { type: String, default: '#3B82F6' },
   description: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now }
+  isPublic: { type: Boolean, default: false },
 });
 
 module.exports = mongoose.model('Tag', tagSchema);

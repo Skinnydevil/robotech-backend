@@ -371,7 +371,7 @@ app.put('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, 
     const user = await User.findByIdAndUpdate(
       req.params.userId,
       { tags: tagIds },
-      { new: true }
+      { returnDocument: 'after' }
     ).select('-password').populate('tags');
 
     if (!user) {
@@ -1076,4 +1076,74 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server listening on port ${PORT}`);
+});
+app.post('/api/tags', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { name, color, isPublic } = req.body;
+    const newTag = new Tag({ 
+      name, 
+      color: color || '#3b82f6', 
+      isPublic: isPublic ?? false 
+    });
+    await newTag.save();
+    res.status(201).json(newTag);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create tag', details: error.message });
+  }
+});
+// Members get only public tags, admins get all tags
+app.get('/api/tags', authenticateToken, async (req, res) => {
+  try {
+    let query = {};
+    if (req.user.role !== 'admin' && req.user.role !== 'board') {
+      query = { isPublic: true };
+    }
+    const tags = await Tag.find(query);
+    res.json(tags);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch tags' });
+  }
+});
+app.put('/api/users/profile/tags', authenticateToken, async (req, res) => {
+  try {
+    const { tagIds } = req.body; // Array of Tag IDs
+    const userId = req.user.id || req.user._id;
+
+    if (!Array.isArray(tagIds)) {
+      return res.status(400).json({ error: 'tagIds must be an array.' });
+    }
+
+    // Verify all chosen tags are actually public (unless user is admin)
+    if (req.user.role !== 'admin') {
+      const publicTags = await Tag.find({ _id: { $in: tagIds }, isPublic: true });
+      if (publicTags.length !== tagIds.length) {
+        return res.status(403).json({ error: 'You can only select public tags.' });
+      }
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { tags: tagIds },
+      { returnDocument: 'after' }
+    ).select('-password').populate('tags');
+
+    res.json({ message: 'Tags updated successfully', user: updatedUser });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update tags', details: error.message });
+  }
+});
+// Example for Feed / Posts endpoint
+app.get('/api/posts', authenticateToken, async (req, res) => {
+  try {
+    const posts = await Post.find()
+      .populate({
+        path: 'author',
+        select: 'name email role tags',
+        populate: { path: 'tags' } // Pulls the full tag object (name, color)
+      })
+      .sort({ createdAt: -1 });
+    res.json(posts);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch posts' });
+  }
 });
