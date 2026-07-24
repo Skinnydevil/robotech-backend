@@ -84,7 +84,7 @@ const UserSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     role: { type: String, enum: ['pending', 'member', 'admin'], default: 'pending' },
-    pushToken: { type: String, default: null }, // Stores device push notification token
+    pushToken: { type: String, default: null },
   },
   { timestamps: true }
 );
@@ -109,7 +109,7 @@ const assemblySessionSchema = new mongoose.Schema(
 
 const AssemblySession = mongoose.model('AssemblySession', assemblySessionSchema);
 
-// Authentication Middleware
+// Middleware: Authenticate JWT Token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -121,6 +121,14 @@ const authenticateToken = (req, res, next) => {
     req.user = user;
     next();
   });
+};
+
+// Middleware: Require Admin Role
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+  }
+  next();
 };
 
 // Save / Update Push Token Route
@@ -176,7 +184,6 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(403).json({ error: 'Your account is pending admin approval.' });
     }
 
-    // Save push token if provided on login
     if (pushToken) {
       user.pushToken = pushToken;
       await user.save();
@@ -206,7 +213,9 @@ app.post('/api/auth/login', async (req, res) => {
 // ==========================================
 // ADMIN ROUTES
 // ==========================================
-app.get('/api/admin/pending-users', async (req, res) => {
+
+// Get pending user approvals
+app.get('/api/admin/pending-users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const pendingUsers = await User.find({ role: 'pending' }).select('-password');
     res.json(pendingUsers);
@@ -215,7 +224,8 @@ app.get('/api/admin/pending-users', async (req, res) => {
   }
 });
 
-app.put('/api/admin/approve-user/:id', async (req, res) => {
+// Approve user
+app.put('/api/admin/approve-user/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.params.id, { role: 'member' });
     res.json({ message: 'User approved successfully!' });
@@ -224,7 +234,8 @@ app.put('/api/admin/approve-user/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/reject-user/:id', async (req, res) => {
+// Reject user
+app.delete('/api/admin/reject-user/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const deletedUser = await User.findByIdAndDelete(req.params.id);
     if (!deletedUser) return res.status(404).json({ message: 'User not found' });
@@ -234,18 +245,10 @@ app.delete('/api/admin/reject-user/:id', async (req, res) => {
   }
 });
 
-// ==========================================
-// GENERAL ASSEMBLY CHECK-IN ROUTES
-// ==========================================
-
-// Admin: Create or fetch an active General Assembly session
-app.post('/api/assembly/session', authenticateToken, async (req, res) => {
+// Admin: Start a new General Assembly session (Matches AdminView.js endpoint)
+app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Only admins can create assembly sessions' });
-    }
-
-    // Close existing active sessions
+    // Close prior active sessions
     await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
 
     const newSession = new AssemblySession({
@@ -256,14 +259,53 @@ app.post('/api/assembly/session', authenticateToken, async (req, res) => {
     });
 
     await newSession.save();
-    res.status(201).json(newSession);
+
+    res.status(201).json({
+      message: 'Assembly session created',
+      assembly: {
+        _id: newSession._id,
+        sessionId: newSession._id.toString(),
+        title: newSession.title,
+        status: newSession.status,
+      },
+    });
   } catch (err) {
     console.error('Error starting assembly session:', err);
     res.status(500).json({ error: 'Failed to create assembly session' });
   }
 });
 
-// Get currently active General Assembly session
+// Admin: Get real-time attendees for a specific session (Matches AdminView.js polling)
+app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const session = await AssemblySession.findById(req.params.id).populate(
+      'attendees.userId',
+      'name email'
+    );
+
+    if (!session) {
+      return res.status(404).json({ error: 'Assembly session not found' });
+    }
+
+    const formattedAttendees = session.attendees.map((item) => ({
+      _id: item._id,
+      name: item.userId?.name || 'Member',
+      email: item.userId?.email || '',
+      timestamp: item.checkedInAt,
+    }));
+
+    res.json({ attendees: formattedAttendees });
+  } catch (err) {
+    console.error('Fetch attendees error:', err);
+    res.status(500).json({ error: 'Failed to fetch assembly attendees' });
+  }
+});
+
+// ==========================================
+// GENERAL ASSEMBLY CHECK-IN ROUTES (MEMBERS)
+// ==========================================
+
+// Get currently active session info
 app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
   try {
     const activeSession = await AssemblySession.findOne({ status: 'active' }).populate(
@@ -276,7 +318,7 @@ app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
   }
 });
 
-// Members: Check into a General Assembly session via scanned QR code
+// Members: Check into a session via QR Code scan
 app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.body;
@@ -308,11 +350,8 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
 });
 
 // Admin: Get all historical assembly sessions
-app.get('/api/assembly/sessions', authenticateToken, async (req, res) => {
+app.get('/api/assembly/sessions', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Unauthorized' });
-    }
     const sessions = await AssemblySession.find()
       .populate('attendees.userId', 'name email')
       .sort({ createdAt: -1 });

@@ -15,11 +15,13 @@ import {
   Keyboard,
   Modal,
   Alert,
+  StyleSheet,
+  Button,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
-import { Camera, CameraScanMode } from 'react-native-camera-kit';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import {
   Menu,
   Settings,
@@ -71,6 +73,7 @@ function MainAppContent() {
   // Assembly Check-In Scanner State
   const [scannerVisible, setScannerVisible] = useState(false);
   const [isSubmittingCheckIn, setIsSubmittingCheckIn] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
 
   const socketRef = useRef(null);
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -206,11 +209,10 @@ function MainAppContent() {
     }
   };
 
-  // Assembly Check-In QR Handler
-  const handleReadCode = async (event) => {
+  // Assembly Check-In QR Handler for Expo Camera
+  const handleBarcodeScanned = async ({ data: qrData }) => {
     if (isSubmittingCheckIn) return;
 
-    const qrData = event.nativeEvent.codeStringValue;
     if (!qrData || !qrData.includes('robotech://checkin')) {
       return;
     }
@@ -218,7 +220,7 @@ function MainAppContent() {
     setIsSubmittingCheckIn(true);
 
     try {
-      // Extract sessionId from parameter URL query
+      // Extract sessionId from URL query parameter
       const urlParams = new URLSearchParams(qrData.split('?')[1]);
       const sessionId = urlParams.get('sessionId');
 
@@ -623,15 +625,25 @@ function MainAppContent() {
               </View>
 
               <View className="flex-1 justify-center items-center overflow-hidden relative">
-                <Camera
-                  scanBarcode={true}
-                  onReadCode={handleReadCode}
-                  showFrame={true}
-                  laserColor="#f59e0b"
-                  frameColor="#f59e0b"
-                  cameraScanMode={CameraScanMode.SCAN_BARCODES}
-                  style={{ width: '100%', height: '100%' }}
-                />
+                {!permission ? (
+                  <ActivityIndicator size="large" color="#f59e0b" />
+                ) : !permission.granted ? (
+                  <View className="p-6 items-center">
+                    <Text className="text-slate-300 text-center mb-4 font-medium">
+                      Camera permission is required to scan QR codes.
+                    </Text>
+                    <Button onPress={requestPermission} title="Grant Permission" color="#f59e0b" />
+                  </View>
+                ) : (
+                  <CameraView
+                    style={StyleSheet.absoluteFillObject}
+                    facing="back"
+                    barcodeScannerSettings={{
+                      barcodeTypes: ['qr'],
+                    }}
+                    onBarcodeScanned={handleBarcodeScanned}
+                  />
+                )}
 
                 {isSubmittingCheckIn && (
                   <View className="absolute inset-0 bg-slate-950/80 justify-center items-center">

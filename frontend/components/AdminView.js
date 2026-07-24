@@ -8,11 +8,10 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
-  Platform,
 } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
-import RNFS from 'react-native-fs';
-import Share from 'react-native-share';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { QrCode, Users, RefreshCw, UserCheck, Share2, Download } from 'lucide-react-native';
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
@@ -166,7 +165,7 @@ export default function AdminView({ token }) {
     return () => clearInterval(interval);
   }, [activeAssembly]);
 
-  // --- REACT-NATIVE-SHARE IMPLEMENTATION FOR QR ---
+  // --- EXPO SHARING IMPLEMENTATION FOR QR ---
   const handleShareQR = () => {
     if (!qrRef.current) {
       Alert.alert('Error', 'QR code element unavailable.');
@@ -174,26 +173,37 @@ export default function AdminView({ token }) {
     }
 
     qrRef.current.toDataURL(async (dataUrl) => {
-      const base64Data = dataUrl.startsWith('data:image/png;base64,')
-        ? dataUrl
-        : `data:image/png;base64,${dataUrl}`;
-
       try {
-        await Share.open({
-          title: 'Share Assembly QR Code',
-          message: `Scan to check into: ${activeAssembly?.title || 'General Assembly'}`,
-          url: base64Data,
-          type: 'image/png',
+        const isAvailable = await Sharing.isAvailableAsync();
+        if (!isAvailable) {
+          Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
+          return;
+        }
+
+        // Clean base64 string
+        const pureBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+        const filename = `Assembly_QR_${Date.now()}.png`;
+        const localPath = `${FileSystem.cacheDirectory}${filename}`;
+
+        // Save image to cache directory
+        await FileSystem.writeAsStringAsync(localPath, pureBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        // Open native share menu
+        await Sharing.shareAsync(localPath, {
+          mimeType: 'image/png',
+          dialogTitle: `Share Check-In QR Code: ${activeAssembly?.title || 'General Assembly'}`,
+          UTI: 'public.png',
         });
       } catch (err) {
-        if (err && err.message !== 'User did not share') {
-          console.error('Share Error:', err);
-        }
+        console.error('Share Error:', err);
+        Alert.alert('Share Failed', 'Unable to share QR code image.');
       }
     });
   };
 
-  // --- REACT-NATIVE-FS IMPLEMENTATION FOR EXPORTING CSV ---
+  // --- EXPO FILE SYSTEM & SHARING IMPLEMENTATION FOR EXPORTING CSV ---
   const handleExportCSV = async () => {
     if (!attendees || attendees.length === 0) {
       Alert.alert('No Attendees', 'There are no checked-in members to export.');
@@ -201,32 +211,37 @@ export default function AdminView({ token }) {
     }
 
     try {
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (!isAvailable) {
+        Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
+        return;
+      }
+
       // Build raw CSV String
       let csvContent = 'Index,Name,CheckIn Time\n';
       attendees.forEach((item, idx) => {
-        const time = new Date(item.timestamp || Date.now()).toLocaleTimeString();
-        csvContent += `"${idx + 1}","${item.name || 'Member'}","${time}"\n`;
+        const time = new Date(item.timestamp || item.checkedInAt || Date.now()).toLocaleTimeString();
+        const name = item.name || item.userId?.name || 'Member';
+        csvContent += `"${idx + 1}","${name}","${time}"\n`;
       });
 
-      // Write File locally using RNFS
+      // Write File locally using Expo FileSystem
       const fileName = `Attendance_${activeAssembly?.title?.replace(/\s+/g, '_') || 'Assembly'}.csv`;
-      const localPath = `${RNFS.CachesDirectoryPath}/${fileName}`;
+      const localPath = `${FileSystem.cacheDirectory}${fileName}`;
 
-      await RNFS.writeFile(localPath, csvContent, 'utf8');
+      await FileSystem.writeAsStringAsync(localPath, csvContent, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
 
       // Present Native Share Interface
-      await Share.open({
-        title: 'Export Attendance List',
-        message: `Attendance CSV for ${activeAssembly?.title || 'Assembly'}`,
-        url: Platform.OS === 'android' ? `file://${localPath}` : localPath,
-        type: 'text/csv',
-        filename: fileName,
+      await Sharing.shareAsync(localPath, {
+        mimeType: 'text/csv',
+        dialogTitle: `Attendance CSV for ${activeAssembly?.title || 'Assembly'}`,
+        UTI: 'public.comma-separated-values-text',
       });
     } catch (err) {
-      if (err && err.message !== 'User did not share') {
-        console.error('CSV Export Error:', err);
-        Alert.alert('Export Failed', 'Could not create or share the CSV document.');
-      }
+      console.error('CSV Export Error:', err);
+      Alert.alert('Export Failed', 'Could not create or share the CSV document.');
     }
   };
 
@@ -409,7 +424,7 @@ export default function AdminView({ token }) {
                     Present Members ({attendees.length})
                   </Text>
                 </View>
-                
+
                 <View className="flex-row items-center gap-3">
                   <TouchableOpacity onPress={fetchAttendees} className="p-1">
                     <RefreshCw size={14} color="#94a3b8" />

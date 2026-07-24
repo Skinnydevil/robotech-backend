@@ -1,6 +1,6 @@
-import RNFS from 'react-native-fs';
-import Share from 'react-native-share';
-import { Alert, Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { Alert } from 'react-native';
 
 // Function 1: Creates a CSV file of attendees and opens the share menu
 export const exportAttendanceCSV = async (session) => {
@@ -24,21 +24,27 @@ export const exportAttendanceCSV = async (session) => {
 
     const csvData = csvHeader + csvRows;
     const filename = `Assembly_Attendance_${session._id || Date.now()}.csv`;
-    const path = `${RNFS.CachesDirectoryPath}/${filename}`;
+    const path = `${FileSystem.cacheDirectory}${filename}`;
 
-    await RNFS.writeFile(path, csvData, 'utf8');
+    // Write CSV content to local cache directory
+    await FileSystem.writeAsStringAsync(path, csvData, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
 
-    await Share.open({
-      title: 'Export Assembly Attendance',
-      message: `Attendance log for ${session.title || 'General Assembly'}`,
-      url: Platform.OS === 'android' ? `file://${path}` : path,
-      type: 'text/csv',
-      filename,
+    // Verify sharing is available on device
+    const isAvailable = await Sharing.isAvailableAsync();
+    if (!isAvailable) {
+      Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
+      return;
+    }
+
+    await Sharing.shareAsync(path, {
+      mimeType: 'text/csv',
+      dialogTitle: `Attendance log for ${session.title || 'General Assembly'}`,
+      UTI: 'public.comma-separated-values-text',
     });
   } catch (error) {
-    if (error && error.message !== 'User did not share') {
-      Alert.alert('Export Failed', 'Unable to generate and share attendance file.');
-    }
+    Alert.alert('Export Failed', 'Unable to generate and share attendance file.');
   }
 };
 
@@ -50,19 +56,28 @@ export const shareQRCode = async (base64Image, sessionTitle = 'General Assembly'
       return;
     }
 
-    const formattedBase64 = base64Image.startsWith('data:image')
-      ? base64Image
-      : `data:image/png;base64,${base64Image}`;
+    // Strip base64 data URL prefix if present to save pure base64 string
+    const pureBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
+    const filename = `QRCode_${Date.now()}.png`;
+    const path = `${FileSystem.cacheDirectory}${filename}`;
 
-    await Share.open({
-      title: `Share Check-In QR Code: ${sessionTitle}`,
-      message: `Scan this QR code to check into ${sessionTitle}`,
-      url: formattedBase64,
-      type: 'image/png',
+    // Write base64 image data to temporary file
+    await FileSystem.writeAsStringAsync(path, pureBase64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    const isAvailable = await Sharing.isAvailableAsync();
+    if (!isAvailable) {
+      Alert.alert('Sharing Unavailable', 'Sharing is not supported on this device.');
+      return;
+    }
+
+    await Sharing.shareAsync(path, {
+      mimeType: 'image/png',
+      dialogTitle: `Share Check-In QR Code: ${sessionTitle}`,
+      UTI: 'public.png',
     });
   } catch (error) {
-    if (error && error.message !== 'User did not share') {
-      Alert.alert('Share Failed', 'Unable to share QR code image.');
-    }
+    Alert.alert('Share Failed', 'Unable to share QR code image.');
   }
 };
