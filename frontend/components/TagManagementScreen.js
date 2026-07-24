@@ -31,14 +31,21 @@ export default function TagManagementScreen({ token }) {
         },
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
+      let data = {};
+      try {
+        data = JSON.parse(rawText);
+      } catch (e) {
+        console.error('Fetch tags non-JSON response:', rawText);
+      }
 
       if (response.ok) {
         setTags(Array.isArray(data) ? data : data.tags || []);
       } else {
-        Alert.alert('Error', data.error || 'Failed to fetch tags.');
+        Alert.alert('Error', data.error || data.message || `Failed to fetch tags (${response.status})`);
       }
     } catch (error) {
+      console.error('Fetch Tags Error:', error);
       Alert.alert('Network Error', 'Could not connect to server.');
     } finally {
       setLoading(false);
@@ -51,7 +58,8 @@ export default function TagManagementScreen({ token }) {
 
   // Add a new tag
   const handleAddTag = async () => {
-    if (!tagName.trim()) {
+    const trimmedName = tagName.trim();
+    if (!trimmedName) {
       Alert.alert('Validation Error', 'Tag name cannot be empty.');
       return;
     }
@@ -60,24 +68,41 @@ export default function TagManagementScreen({ token }) {
     setSubmitting(true);
 
     try {
+      console.log('Sending Add Tag Request:', trimmedName);
+
       const response = await fetch(`${API_BASE_URL}/tags`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ name: tagName.trim() }),
+        body: JSON.stringify({ name: trimmedName }),
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
+      console.log('Add Tag HTTP Status:', response.status);
+      console.log('Add Tag Server Response:', rawText);
+
+      let data = {};
+      try {
+        data = JSON.parse(rawText);
+      } catch (e) {
+        console.error('Add tag response was not valid JSON:', rawText);
+      }
 
       if (response.ok) {
         setTagName('');
         fetchTags();
       } else {
-        Alert.alert('Error', data.error || 'Failed to create tag.');
+        // Display precise error returned from Express
+        const errorMessage =
+          data.error ||
+          data.message ||
+          (response.status === 400 ? 'Tag already exists or invalid name.' : `Server returned status ${response.status}`);
+        Alert.alert('Error', errorMessage);
       }
     } catch (error) {
+      console.error('Add Tag Exception:', error);
       Alert.alert('Network Error', 'Could not create tag.');
     } finally {
       setSubmitting(false);
@@ -106,10 +131,15 @@ export default function TagManagementScreen({ token }) {
               if (response.ok) {
                 fetchTags();
               } else {
-                const data = await response.json();
-                Alert.alert('Error', data.error || 'Failed to delete tag.');
+                const rawText = await response.text();
+                let data = {};
+                try {
+                  data = JSON.parse(rawText);
+                } catch (e) {}
+                Alert.alert('Error', data.error || data.message || 'Failed to delete tag.');
               }
             } catch (error) {
+              console.error('Delete Tag Error:', error);
               Alert.alert('Network Error', 'Could not delete tag.');
             }
           },
