@@ -146,7 +146,7 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Middleware: Require Admin or Board Role (Case-Insensitive & Dual ID Field Support)
+// Middleware: Require Admin or Board Role
 const requireAdmin = async (req, res, next) => {
   try {
     const userId = req.user?.id || req.user?._id;
@@ -269,7 +269,6 @@ app.post('/api/auth/login', async (req, res) => {
 // TAG SYSTEM API ROUTES
 // ==========================================
 
-// Create a new tag (Admin / Board only)
 app.post('/api/tags', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name, color, isPublic } = req.body;
@@ -296,7 +295,6 @@ app.post('/api/tags', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Get all tags (Members get only public tags, admins/board get all tags)
 app.get('/api/tags', authenticateToken, async (req, res) => {
   try {
     let query = {};
@@ -311,7 +309,6 @@ app.get('/api/tags', authenticateToken, async (req, res) => {
   }
 });
 
-// Update a tag (Admin / Board only)
 app.put('/api/tags/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { name, color, description, isPublic } = req.body;
@@ -331,7 +328,6 @@ app.put('/api/tags/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-// Delete a tag and remove references from users
 app.delete('/api/tags/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const tagId = req.params.id;
@@ -349,7 +345,6 @@ app.delete('/api/tags/:id', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
-// Assign tags to a user (Admin / Board only)
 app.post('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { tagIds } = req.body;
@@ -374,7 +369,6 @@ app.post('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req,
   }
 });
 
-// OVERWRITE / SET ALL TAGS FOR A USER (Admin/Board only)
 app.put('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { tagIds } = req.body;
@@ -386,7 +380,7 @@ app.put('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, 
     const user = await User.findByIdAndUpdate(
       req.params.userId,
       { tags: tagIds },
-      { returnDocument: 'after' }
+      { new: true }
     ).select('-password').populate('tags');
 
     if (!user) {
@@ -399,7 +393,6 @@ app.put('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, 
   }
 });
 
-// Update profile tags for regular users
 app.put('/api/users/profile/tags', authenticateToken, async (req, res) => {
   try {
     const { tagIds } = req.body;
@@ -420,7 +413,7 @@ app.put('/api/users/profile/tags', authenticateToken, async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       { tags: tagIds },
-      { returnDocument: 'after' }
+      { new: true }
     ).select('-password').populate('tags');
 
     res.json({ message: 'Tags updated successfully', user: updatedUser });
@@ -429,7 +422,6 @@ app.put('/api/users/profile/tags', authenticateToken, async (req, res) => {
   }
 });
 
-// Remove a tag from a user (Admin / Board only)
 app.delete('/api/users/:userId/tags/:tagId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { userId, tagId } = req.params;
@@ -454,7 +446,6 @@ app.delete('/api/users/:userId/tags/:tagId', authenticateToken, requireAdmin, as
 // TAG SETTINGS API ROUTES
 // ==========================================
 
-// Get Tag Creation Settings Policy
 app.get('/api/tags/settings', authenticateToken, async (req, res) => {
   try {
     let settings = await TagSettings.findOne();
@@ -468,7 +459,6 @@ app.get('/api/tags/settings', authenticateToken, async (req, res) => {
   }
 });
 
-// Update Tag Creation Settings Policy (Admin / Board only)
 app.put('/api/tags/settings', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { allowPublicCreation } = req.body;
@@ -751,6 +741,10 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
         select: 'name email role tags',
         populate: { path: 'tags' }
       })
+      .populate({
+        path: 'comments.user',
+        select: 'name email'
+      })
       .sort({ createdAt: -1 });
     res.json(posts);
   } catch (err) {
@@ -758,9 +752,11 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/posts', upload.single('media'), async (req, res) => {
+app.post('/api/posts', authenticateToken, upload.single('media'), async (req, res) => {
   try {
-    const { authorName, authorRole, content, category } = req.body;
+    const { content, category } = req.body;
+    const userId = req.user.id || req.user._id;
+
     if (!content && !req.file) {
       return res.status(400).json({ error: 'Post must contain text or media' });
     }
@@ -774,8 +770,9 @@ app.post('/api/posts', upload.single('media'), async (req, res) => {
     }
 
     const newPost = new Post({
-      authorName: authorName || 'Builder',
-      authorRole: authorRole || 'member',
+      author: userId,
+      authorName: req.user.name || 'Member',
+      authorRole: req.user.role || 'member',
       content: content || '',
       category: category || 'General',
       mediaUrl,
@@ -783,8 +780,16 @@ app.post('/api/posts', upload.single('media'), async (req, res) => {
     });
 
     await newPost.save();
-    res.status(201).json(newPost);
+
+    const populatedPost = await Post.findById(newPost._id).populate({
+      path: 'author',
+      select: 'name email role tags',
+      populate: { path: 'tags' }
+    });
+
+    res.status(201).json(populatedPost);
   } catch (error) {
+    console.error('Create post error:', error);
     res.status(500).json({ error: 'Failed to create post' });
   }
 });
@@ -804,15 +809,27 @@ app.put('/api/posts/:id/like', authenticateToken, async (req, res) => {
     }
 
     await post.save();
-    res.json({ likesCount: post.likes.length, likes: post.likes });
+
+    const updatedPost = await Post.findById(req.params.id)
+      .populate({
+        path: 'author',
+        select: 'name email role tags',
+        populate: { path: 'tags' }
+      })
+      .populate({
+        path: 'comments.user',
+        select: 'name email'
+      });
+
+    res.json(updatedPost);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update like status' });
   }
 });
 
-app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
+app.post('/api/posts/:id/comment', authenticateToken, async (req, res) => {
   try {
-    const { text, parentId } = req.body;
+    const { text } = req.body;
     if (!text || !text.trim()) {
       return res.status(400).json({ error: 'Comment text cannot be empty' });
     }
@@ -822,17 +839,25 @@ app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
 
     const userId = req.user.id || req.user._id;
 
-    const newComment = {
-      authorName: req.user.name || 'Builder',
-      authorId: userId,
+    post.comments.push({
+      user: userId,
       text: text.trim(),
-      parentId: parentId || null,
-    };
+    });
 
-    post.comments.push(newComment);
     await post.save();
 
-    res.status(201).json(post.comments);
+    const updatedPost = await Post.findById(req.params.id)
+      .populate({
+        path: 'author',
+        select: 'name email role tags',
+        populate: { path: 'tags' }
+      })
+      .populate({
+        path: 'comments.user',
+        select: 'name email'
+      });
+
+    res.json(updatedPost);
   } catch (error) {
     res.status(500).json({ error: 'Failed to post comment' });
   }
@@ -844,7 +869,7 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
     const userId = req.user.id || req.user._id;
-    const isAuthor = post.authorName === req.user.name || post.authorId?.toString() === userId.toString();
+    const isAuthor = post.author?.toString() === userId.toString() || post.authorId?.toString() === userId.toString();
     const isAdmin = String(req.user.role).toLowerCase() === 'admin';
 
     if (!isAuthor && !isAdmin) {
