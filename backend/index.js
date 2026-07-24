@@ -1225,21 +1225,20 @@ app.delete('/api/messages/:id', authenticateToken, async (req, res) => {
 });
 // Add this route to your Express backend (index.js or routes/conversations.js)
 
+
 // DELETE a whole conversation by ID
 app.delete('/api/conversations/:id', authenticateToken, async (req, res) => {
   try {
     const conversationId = req.params.id;
 
-    // Optional: Verify if the user is a participant before deleting
     const conversation = await Conversation.findById(conversationId);
     if (!conversation) {
       return res.status(404).json({ error: 'Conversation not found' });
     }
 
-    // Delete all messages associated with this conversation
+    // Replace 'Message' with whatever your Message model is named in your code (e.g., ChatMessage)
     await Message.deleteMany({ conversationId: conversationId });
 
-    // Delete the conversation itself
     await Conversation.findByIdAndDelete(conversationId);
 
     res.status(200).json({ message: 'Conversation deleted successfully' });
