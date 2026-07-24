@@ -340,13 +340,14 @@ function MainAppContent() {
       if (newPassword) formData.append('newPassword', newPassword);
 
       if (avatarUri) {
-        const filename = avatarUri.split('/').pop() || 'avatar.jpg';
-        const match = /\.(\w+)$/.exec(filename);
-        const type = match ? `image/${match[1]}` : 'image/jpeg';
+        const uriParts = avatarUri.split('.');
+        const fileType = uriParts[uriParts.length - 1];
+        const filename = avatarUri.split('/').pop() || `avatar.${fileType || 'jpg'}`;
+        
         formData.append('avatar', {
-          uri: avatarUri,
+          uri: Platform.OS === 'ios' ? avatarUri.replace('file://', '') : avatarUri,
           name: filename,
-          type,
+          type: `image/${fileType || 'jpeg'}`,
         });
       }
 
@@ -354,6 +355,8 @@ function MainAppContent() {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${token}`,
+          // Note: Do NOT manually set 'Content-Type': 'multipart/form-data' here! 
+          // Fetch will automatically set the correct boundary when given a FormData object.
         },
         body: formData,
       });
@@ -371,6 +374,7 @@ function MainAppContent() {
       setAvatarUri(null);
       setSettingsMsg({ type: 'success', text: 'Profile updated successfully!' });
     } catch (err) {
+      console.error('Update profile error:', err);
       setSettingsMsg({ type: 'error', text: 'Failed to update profile.' });
     }
   };

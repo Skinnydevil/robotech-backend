@@ -280,7 +280,11 @@ export default function FeedView({ token, currentUser }) {
       item.authorName ||
       'Anonymous User';
 
-    const authorAvatar = typeof item.author === 'object' ? item.author?.avatar : null;
+    // Extract author avatar from nested object or explicit field
+    const authorAvatar =
+      (typeof item.author === 'object' && item.author?.avatar) ||
+      item.authorAvatar ||
+      null;
 
     const authorId = (typeof item.author === 'object' ? item.author?._id || item.author?.id : item.author)?.toString();
     const canDelete = currentUserId && (authorId === currentUserId || isAdminOrBoard);
@@ -362,25 +366,39 @@ export default function FeedView({ token, currentUser }) {
         {activeCommentPostId === item._id && (
           <View className="mt-3 pt-3 border-t border-slate-800">
             {item.comments && item.comments.length > 0 ? (
-              item.comments.map((comment, index) => (
-                <View key={comment._id || index} className="bg-slate-900/60 p-2.5 rounded-lg mb-2 flex-row items-start gap-2">
-                  <View className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-500/40 justify-center items-center overflow-hidden">
-                    {comment.authorId?.avatar ? (
-                      <Image source={{ uri: getMediaUri(comment.authorId.avatar) }} className="w-full h-full" />
-                    ) : (
-                      <Text className="text-amber-500 font-bold text-[10px]">
-                        {(comment.authorName || 'M').charAt(0).toUpperCase()}
+              item.comments.map((comment, index) => {
+                const commentAvatar =
+                  comment.authorId?.avatar ||
+                  comment.user?.avatar ||
+                  comment.authorAvatar ||
+                  null;
+
+                const commentAuthorName =
+                  comment.authorName ||
+                  comment.authorId?.name ||
+                  comment.user?.name ||
+                  'Member';
+
+                return (
+                  <View key={comment._id || index} className="bg-slate-900/60 p-2.5 rounded-lg mb-2 flex-row items-start gap-2">
+                    <View className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-500/40 justify-center items-center overflow-hidden">
+                      {commentAvatar ? (
+                        <Image source={{ uri: getMediaUri(commentAvatar) }} className="w-full h-full" resizeMode="cover" />
+                      ) : (
+                        <Text className="text-amber-500 font-bold text-[10px]">
+                          {commentAuthorName.charAt(0).toUpperCase()}
+                        </Text>
+                      )}
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-amber-500 font-bold text-xs">
+                        {commentAuthorName}
                       </Text>
-                    )}
+                      <Text className="text-slate-300 text-xs mt-0.5">{comment.text}</Text>
+                    </View>
                   </View>
-                  <View className="flex-1">
-                    <Text className="text-amber-500 font-bold text-xs">
-                      {comment.authorName || comment.authorId?.name || comment.user?.name || 'Member'}
-                    </Text>
-                    <Text className="text-slate-300 text-xs mt-0.5">{comment.text}</Text>
-                  </View>
-                </View>
-              ))
+                );
+              })
             ) : (
               <Text className="text-slate-500 text-xs italic mb-2">No comments yet. Be the first!</Text>
             )}

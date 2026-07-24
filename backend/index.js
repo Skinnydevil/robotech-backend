@@ -344,7 +344,7 @@ app.post('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req,
     const user = await User.findByIdAndUpdate(
       req.params.userId,
       { $addToSet: { tags: { $each: tagIds } } },
-      { returnDocument: 'after' }
+      { new: true, runValidators: true }
     ).select('-password').populate('tags');
 
     if (!user) {
