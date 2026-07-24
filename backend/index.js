@@ -795,3 +795,33 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+// Admin: Close / End a specific General Assembly session
+app.put('/api/admin/assembly/:id/close', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const session = await AssemblySession.findByIdAndUpdate(
+      req.params.id,
+      { status: 'closed' },
+      { new: true }
+    );
+
+    if (!session) {
+      return res.status(404).json({ error: 'Assembly session not found' });
+    }
+
+    res.json({ message: 'Assembly session closed successfully', session });
+  } catch (err) {
+    console.error('Error closing assembly session:', err);
+    res.status(500).json({ error: 'Failed to close assembly session on server' });
+  }
+});
+
+// Admin: Close ALL currently active General Assembly sessions (Fallback)
+app.put('/api/admin/assembly/close-active', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
+    res.json({ message: 'All active sessions closed successfully' });
+  } catch (err) {
+    console.error('Error closing active sessions:', err);
+    res.status(500).json({ error: 'Failed to close assembly session on server' });
+  }
+});
