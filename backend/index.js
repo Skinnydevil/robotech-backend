@@ -1162,49 +1162,37 @@ io.on('connection', (socket) => {
   });
 
   socket.on('send_private_message', async (data) => {
-    try {
-      const { conversationId, text, senderId, senderName, senderAvatar } = data;
-      const currentUserId = socket.user._id;
+  try {
+    const { conversationId, text } = data;
+    const currentUserId = socket.user._id;
 
-      const userObj = await User.findById(senderId || currentUserId).select('avatar name');
+    if (!text || typeof text !== 'string') return;
 
-      const newMessage = new ChatMessage({
-        conversationId,
-        senderId: senderId || currentUserId,
-        senderName: senderName || userObj?.name || socket.user.name,
-        text,
-      });
-      await newMessage.save();
+    const userObj = await User.findById(currentUserId).select('avatar name tags');
 
-      const populatedMessage = {
-        ...newMessage.toObject(),
-        senderAvatar: senderAvatar || userObj?.avatar || null,
-      };
+    const newMessage = new ChatMessage({
+      conversationId,
+      senderId: currentUserId,
+      senderName: userObj?.name || socket.user.name,
+      senderAvatar: userObj?.avatar || null,
+      senderTags: userObj?.tags || [],
+      text: text.trim(), // Ensure it's handled as a clean complete string
+    });
 
-      const conv = await Conversation.findByIdAndUpdate(conversationId, {
-        lastMessage: text,
-        updatedAt: Date.now(),
-      }).populate('participants');
+    await newMessage.save();
 
-      io.to(conversationId).emit('receive_private_message', populatedMessage);
+    const populatedMessage = {
+      ...newMessage.toObject(),
+      senderAvatar: userObj?.avatar || null,
+      senderTags: userObj?.tags || [],
+    };
 
-      const recipientsToNotify = conv.participants.filter(
-        (p) => p._id.toString() !== (senderId || currentUserId).toString() && p.pushToken
-      );
-
-      const tokens = recipientsToNotify.map((p) => p.pushToken);
-      if (tokens.length > 0) {
-        await sendPushNotifications(
-          tokens,
-          `💬 Message from ${senderName || socket.user.name}`,
-          text.length > 50 ? `${text.substring(0, 50)}...` : text,
-          { type: 'CHAT', conversationId }
-        );
-      }
-    } catch (err) {
-      console.error('Socket error:', err);
-    }
-  });
+    // Broadcast to everyone in the room including sender
+    io.to(conversationId).emit('receive_private_message', populatedMessage);
+  } catch (err) {
+    console.error('Socket send_private_message error:', err);
+  }
+});
 });
 
 // ==========================================
