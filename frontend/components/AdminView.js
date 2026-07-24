@@ -33,7 +33,7 @@ export default function AdminView({ token }) {
   // Ref to target the SVG element for rendering base64 images
   const qrRef = useRef(null);
 
-  // Fetch Pending User Approvals
+  // 1. FETCH PENDING USER APPROVALS
   const fetchPendingUsers = async () => {
     try {
       setLoadingUsers(true);
@@ -53,8 +53,26 @@ export default function AdminView({ token }) {
     }
   };
 
+  // 2. FETCH ACTIVE ASSEMBLY SESSION (Restores session across logouts/restarts)
+  const checkActiveAssembly = async () => {
+    try {
+      const res = await fetch(`${API_URL}/assembly/session/active`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.status === 'active') {
+          setActiveAssembly(data);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching active session state:', err);
+    }
+  };
+
   useEffect(() => {
     fetchPendingUsers();
+    checkActiveAssembly();
   }, [token]);
 
   // Approve User Handler
@@ -128,6 +146,7 @@ export default function AdminView({ token }) {
       if (res.ok) {
         setActiveAssembly(data.assembly);
         setAttendees([]);
+        setAssemblyName('');
       } else {
         Alert.alert('Error', data.error || 'Failed to start assembly.');
       }
@@ -168,7 +187,7 @@ export default function AdminView({ token }) {
   // --- EXPO SHARING IMPLEMENTATION FOR QR ---
   const handleShareQR = () => {
     if (!qrRef.current) {
-      Alert.alert('Error', 'QR code element unavailable.');
+      Alert.alert('Error', 'QR code image element is still loading.');
       return;
     }
 
@@ -218,11 +237,12 @@ export default function AdminView({ token }) {
       }
 
       // Build raw CSV String
-      let csvContent = 'Index,Name,CheckIn Time\n';
+      let csvContent = 'Index,Name,Email,CheckIn Time\n';
       attendees.forEach((item, idx) => {
         const time = new Date(item.timestamp || item.checkedInAt || Date.now()).toLocaleTimeString();
         const name = item.name || item.userId?.name || 'Member';
-        csvContent += `"${idx + 1}","${name}","${time}"\n`;
+        const email = item.email || item.userId?.email || '';
+        csvContent += `"${idx + 1}","${name}","${email}","${time}"\n`;
       });
 
       // Write File locally using Expo FileSystem
@@ -400,7 +420,10 @@ export default function AdminView({ token }) {
               <View className="bg-white p-4 rounded-2xl shadow-xl mb-4 items-center justify-center">
                 <QRCode
                   getRef={(c) => (qrRef.current = c)}
-                  value={`robotech://checkin?sessionId=${activeAssembly.sessionId || activeAssembly._id}`}
+                  value={JSON.stringify({
+                    type: 'GENERAL_ASSEMBLY_CHECKIN',
+                    sessionId: activeAssembly._id || activeAssembly.sessionId,
+                  })}
                   size={200}
                 />
               </View>
@@ -469,7 +492,7 @@ export default function AdminView({ token }) {
                 className="mt-5 bg-slate-800 py-3 px-6 rounded-xl border border-slate-700 active:scale-95"
               >
                 <Text className="text-slate-300 font-bold text-xs uppercase tracking-wider">
-                  End Session
+                  Hide Display Panel
                 </Text>
               </TouchableOpacity>
             </View>

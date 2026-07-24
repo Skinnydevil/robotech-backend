@@ -76,6 +76,7 @@ function MainAppContent() {
   const [permission, requestPermission] = useCameraPermissions();
 
   const socketRef = useRef(null);
+  const isScanningRef = useRef(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   // Immediate State-Switch Navigation
@@ -210,23 +211,31 @@ function MainAppContent() {
   };
 
   // Assembly Check-In QR Handler for Expo Camera
-  const handleBarcodeScanned = async ({ data: qrData }) => {
-    if (isSubmittingCheckIn) return;
+  const handleBarcodeScanned = async ({ data: rawData }) => {
+    if (isSubmittingCheckIn || isScanningRef.current) return;
 
-    if (!qrData || !qrData.includes('robotech://checkin')) {
-      return;
-    }
-
+    isScanningRef.current = true;
     setIsSubmittingCheckIn(true);
 
     try {
-      // Extract sessionId from URL query parameter
-      const urlParams = new URLSearchParams(qrData.split('?')[1]);
-      const sessionId = urlParams.get('sessionId');
+      let sessionId = null;
+
+      // Extract sessionId from potential URL payload formats or raw text
+      if (rawData.includes('sessionId=')) {
+        const match = rawData.match(/sessionId=([^&]+)/);
+        if (match) sessionId = match[1];
+      } else if (rawData.includes('robotech://checkin')) {
+        const urlParams = new URLSearchParams(rawData.split('?')[1]);
+        sessionId = urlParams.get('sessionId');
+      } else {
+        // Fallback: assume raw string is the Mongo session ID directly
+        sessionId = rawData.trim();
+      }
 
       if (!sessionId) {
-        Alert.alert('Invalid Code', 'This QR code is not a valid General Assembly session token.');
+        Alert.alert('Invalid Code', 'This QR code is not a valid assembly session token.');
         setIsSubmittingCheckIn(false);
+        isScanningRef.current = false;
         return;
       }
 
@@ -245,13 +254,37 @@ function MainAppContent() {
         setScannerVisible(false);
         Alert.alert('Check-In Confirmed! 🎯', data.message || 'You are marked present for this assembly.');
       } else {
-        Alert.alert('Check-In Failed', data.error || 'Could not register attendance.');
+        Alert.alert('Check-In Failed', data.error || 'Could not register attendance.', [
+          {
+            text: 'Try Again',
+            onPress: () => {
+              isScanningRef.current = false;
+            },
+          },
+        ]);
       }
     } catch (err) {
-      Alert.alert('Error', 'Failed to connect to check-in server.');
+      Alert.alert('Error', 'Failed to connect to check-in server.', [
+        {
+          text: 'OK',
+          onPress: () => {
+            isScanningRef.current = false;
+          },
+        },
+      ]);
     } finally {
       setIsSubmittingCheckIn(false);
     }
+  };
+
+  const openScannerModal = () => {
+    isScanningRef.current = false;
+    setScannerVisible(true);
+  };
+
+  const closeScannerModal = () => {
+    isScanningRef.current = false;
+    setScannerVisible(false);
   };
 
   const handleLogout = async () => {
@@ -430,7 +463,7 @@ function MainAppContent() {
                   </View>
 
                   <TouchableOpacity
-                    onPress={() => setScannerVisible(true)}
+                    onPress={openScannerModal}
                     className="bg-amber-500 p-3.5 rounded-xl flex-row items-center gap-1.5 active:scale-95"
                   >
                     <QrCode size={16} color="#0f172a" />
@@ -609,7 +642,7 @@ function MainAppContent() {
             visible={scannerVisible}
             animationType="slide"
             transparent={false}
-            onRequestClose={() => setScannerVisible(false)}
+            onRequestClose={closeScannerModal}
           >
             <SafeAreaView className="flex-1 bg-slate-950 justify-between">
               <View className="flex-row justify-between items-center p-5 border-b border-slate-800">
@@ -617,14 +650,14 @@ function MainAppContent() {
                   📷 Scan Assembly Code
                 </Text>
                 <TouchableOpacity
-                  onPress={() => setScannerVisible(false)}
+                  onPress={closeScannerModal}
                   className="bg-slate-900 border border-slate-800 p-2 rounded-xl"
                 >
                   <X size={20} color="#94a3b8" />
                 </TouchableOpacity>
               </View>
 
-              <View className="flex-1 justify-center items-center overflow-hidden relative">
+              <View className="flex-1 justify-center items-center overflow-hidden relative bg-black">
                 {!permission ? (
                   <ActivityIndicator size="large" color="#f59e0b" />
                 ) : !permission.granted ? (
@@ -635,14 +668,21 @@ function MainAppContent() {
                     <Button onPress={requestPermission} title="Grant Permission" color="#f59e0b" />
                   </View>
                 ) : (
-                  <CameraView
-                    style={StyleSheet.absoluteFillObject}
-                    facing="back"
-                    barcodeScannerSettings={{
-                      barcodeTypes: ['qr'],
-                    }}
-                    onBarcodeScanned={handleBarcodeScanned}
-                  />
+                  <>
+                    <CameraView
+                      style={StyleSheet.absoluteFillObject}
+                      facing="back"
+                      barcodeScannerSettings={{
+                        barcodeTypes: ['qr'],
+                      }}
+                      onBarcodeScanned={handleBarcodeScanned}
+                    />
+
+                    {/* Camera Overlay Reticle */}
+                    <View className="w-64 h-64 border-2 border-amber-500/80 rounded-3xl bg-amber-500/5 justify-center items-center">
+                      <View className="w-56 h-56 border border-dashed border-amber-400/40 rounded-2xl" />
+                    </View>
+                  </>
                 )}
 
                 {isSubmittingCheckIn && (

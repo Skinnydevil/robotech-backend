@@ -2,6 +2,7 @@ const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 require('dotenv').config();
+const fs = require('fs');
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -21,13 +22,19 @@ const app = express();
 const server = http.createServer(app);
 const expo = new Expo();
 
+// Ensure local uploads directory exists on startup
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json());
 
 // Serve uploaded media files statically
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(uploadsDir));
 
 // Multer Storage Configuration
 const storage = multer.diskStorage({
@@ -149,7 +156,7 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
     if (existingUser) {
       return res.status(400).json({ error: 'Email is already registered' });
     }
@@ -158,7 +165,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     const newUser = new User({
       name,
-      email,
+      email: email.toLowerCase().trim(),
       password: hashedPassword,
       role: 'pending',
     });
@@ -174,7 +181,7 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, pushToken } = req.body;
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
     if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
     const validPassword = await bcrypt.compare(password, user.password);
@@ -245,7 +252,7 @@ app.delete('/api/admin/reject-user/:id', authenticateToken, requireAdmin, async 
   }
 });
 
-// Admin: Start a new General Assembly session (Matches AdminView.js endpoint)
+// Admin: Start a new General Assembly session
 app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (req, res) => {
   try {
     // Close prior active sessions
@@ -275,7 +282,7 @@ app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (re
   }
 });
 
-// Admin: Get real-time attendees for a specific session (Matches AdminView.js polling)
+// Admin: Get real-time attendees for a specific session
 app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const session = await AssemblySession.findById(req.params.id).populate(
@@ -624,7 +631,7 @@ app.post('/api/events', authenticateToken, async (req, res) => {
 
     await newEvent.save();
 
-    // 🔔 Notify all members except creator
+    // Notify all members except creator
     const membersToNotify = await User.find({
       _id: { $ne: req.user.id },
       pushToken: { $ne: null },
@@ -669,8 +676,20 @@ app.put('/api/events/:id/rsvp', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// SOCKET.IO REAL-TIME CHAT WITH NOTIFICATIONS
+// SOCKET.IO REAL-TIME CHAT WITH AUTH
 // ==========================================
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error('Authentication error: Token required'));
+  }
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return next(new Error('Authentication error: Invalid token'));
+    socket.user = decoded;
+    next();
+  });
+});
+
 io.on('connection', (socket) => {
   socket.on('join_conversation', (conversationId) => {
     socket.join(conversationId);
@@ -686,8 +705,8 @@ io.on('connection', (socket) => {
 
       const newMessage = new ChatMessage({
         conversationId,
-        senderId,
-        senderName,
+        senderId: senderId || socket.user.id,
+        senderName: senderName || socket.user.name,
         text,
       });
       await newMessage.save();
@@ -700,16 +719,16 @@ io.on('connection', (socket) => {
       // Emit real-time message via socket
       io.to(conversationId).emit('receive_private_message', newMessage);
 
-      // 🔔 Push notification for offline/background chat recipients
+      // Push notification for offline/background chat recipients
       const recipientsToNotify = conv.participants.filter(
-        (p) => p._id.toString() !== senderId && p.pushToken
+        (p) => p._id.toString() !== (senderId || socket.user.id) && p.pushToken
       );
 
       const tokens = recipientsToNotify.map((p) => p.pushToken);
       if (tokens.length > 0) {
         await sendPushNotifications(
           tokens,
-          `💬 Message from ${senderName}`,
+          `💬 Message from ${senderName || socket.user.name}`,
           text.length > 50 ? `${text.substring(0, 50)}...` : text,
           { type: 'CHAT', conversationId }
         );
