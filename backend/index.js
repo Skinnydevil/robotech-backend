@@ -23,7 +23,7 @@ const tagSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-const Tag = mongoose.model('Tag', tagSchema);
+
 
 // User Schema (Updated with Tags)
 const userSchema = new mongoose.Schema({
