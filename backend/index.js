@@ -194,13 +194,14 @@ app.post('/api/auth/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = new User({
-      name,
-      email: email.toLowerCase().trim(),
-      password: hashedPassword,
-      inscriptionNumber: inscriptionNumber.trim(),
-      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
-      role: 'pending',
-    });
+  name,
+  email: email.toLowerCase().trim(),
+  password: hashedPassword,
+  inscriptionNumber: inscriptionNumber.trim(),
+  dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+  role: 'pending',
+  avatar: req.body.avatar || null, // Ensure avatar property is initialized
+});
 
     await newUser.save();
     res.status(201).json({ message: 'Registration successful! Please wait for admin approval.' });
@@ -888,7 +889,16 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
 });
 
 // UPDATED PROFILE UPDATE ROUTE
-app.put('/api/users/profile', authenticateToken, upload.single('avatar'), async (req, res) => {
+// UPDATED PROFILE UPDATE ROUTE
+app.put('/api/users/profile', authenticateToken, (req, res, next) => {
+  // Use multer as a soft middleware so it doesn't break JSON requests
+  upload.single('avatar')(req, res, (err) => {
+    if (err) {
+      console.error('Multer error:', err);
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const { name, currentPassword, newPassword, tags, avatar } = req.body;
     const userId = req.user._id;
@@ -896,6 +906,7 @@ app.put('/api/users/profile', authenticateToken, upload.single('avatar'), async 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
+    // Handle password updates
     if (newPassword) {
       if (!currentPassword) {
         return res.status(400).json({ error: 'Current password is required' });
@@ -909,10 +920,12 @@ app.put('/api/users/profile', authenticateToken, upload.single('avatar'), async 
 
     if (name && name.trim()) user.name = name.trim();
 
-    // Support both direct file uploads and base64/URL avatars in body
+    // 1. If file uploaded via Multer form-data
     if (req.file) {
       user.avatar = `/uploads/${req.file.filename}`;
-    } else if (avatar !== undefined) {
+    } 
+    // 2. If avatar passed as string in JSON body (Base64 or URL)
+    else if (avatar) {
       user.avatar = avatar;
     }
 
@@ -925,6 +938,7 @@ app.put('/api/users/profile', authenticateToken, upload.single('avatar'), async 
     }
 
     await user.save();
+    
     const updatedUser = await User.findById(userId).select('-password').populate('tags');
 
     res.json({
