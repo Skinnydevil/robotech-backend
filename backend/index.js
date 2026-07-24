@@ -87,6 +87,7 @@ mongoose
   })
   .then(() => console.log('🔌 Connected securely to MongoDB Cloud Database'))
   .catch((err) => console.error('❌ Database connection failed:', err));
+  
 
 // Tag Settings Schema
 const TagSettingsSchema = new mongoose.Schema(
@@ -891,10 +892,10 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
 // UPDATED PROFILE UPDATE ROUTE
 // UPDATED PROFILE UPDATE ROUTE
 app.put('/api/users/profile', authenticateToken, (req, res, next) => {
-  // Use multer as a soft middleware so it doesn't break JSON requests
   upload.single('avatar')(req, res, (err) => {
     if (err) {
-      console.error('Multer error:', err);
+      console.error('Multer file upload error:', err);
+      return res.status(400).json({ error: 'File upload error: ' + err.message });
     }
     next();
   });
@@ -904,12 +905,14 @@ app.put('/api/users/profile', authenticateToken, (req, res, next) => {
     const userId = req.user._id;
 
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     // Handle password updates
     if (newPassword) {
       if (!currentPassword) {
-        return res.status(400).json({ error: 'Current password is required' });
+        return res.status(400).json({ error: 'Current password is required to set a new password' });
       }
       const isMatch = await bcrypt.compare(currentPassword, user.password);
       if (!isMatch) {
@@ -918,17 +921,19 @@ app.put('/api/users/profile', authenticateToken, (req, res, next) => {
       user.password = await bcrypt.hash(newPassword, 10);
     }
 
-    if (name && name.trim()) user.name = name.trim();
+    // Handle name updates
+    if (name && name.trim()) {
+      user.name = name.trim();
+    }
 
-    // 1. If file uploaded via Multer form-data
+    // Handle avatar (either via Multer file stream or string URL/Base64 fallback)
     if (req.file) {
       user.avatar = `/uploads/${req.file.filename}`;
-    } 
-    // 2. If avatar passed as string in JSON body (Base64 or URL)
-    else if (avatar) {
+    } else if (avatar) {
       user.avatar = avatar;
     }
 
+    // Handle tags update if provided
     if (tags) {
       try {
         user.tags = typeof tags === 'string' ? JSON.parse(tags) : tags;
@@ -955,8 +960,8 @@ app.put('/api/users/profile', authenticateToken, (req, res, next) => {
       },
     });
   } catch (err) {
-    console.error('Update profile error:', err);
-    res.status(500).json({ error: 'Failed to update profile' });
+    console.error('Update profile server error:', err);
+    res.status(500).json({ error: 'Failed to update profile: ' + err.message });
   }
 });
 

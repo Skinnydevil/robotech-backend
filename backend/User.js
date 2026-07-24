@@ -40,7 +40,7 @@ const UserSchema = new mongoose.Schema(
     },
     role: { 
       type: String, 
-      enum: ['pending', 'member', 'admin', 'board', 'Pending', 'Member', 'Admin', 'Board'], 
+      enum: ['pending', 'member', 'admin', 'board'], 
       default: 'pending' 
     },
     pushToken: { 
@@ -57,4 +57,4 @@ const UserSchema = new mongoose.Schema(
   }
 );
 
-module.exports = mongoose.model('User', mongoose.models.User || UserSchema);
+module.exports = mongoose.model('User', UserSchema);
