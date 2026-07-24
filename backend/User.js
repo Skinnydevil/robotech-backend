@@ -8,6 +8,11 @@ const UserSchema = new mongoose.Schema(
       required: true, 
       trim: true 
     },
+    // Add this field to your userSchema definition inside User.js
+    tags: [{ 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'Tag' 
+    }],
     email: { 
       type: String, 
       required: true, 

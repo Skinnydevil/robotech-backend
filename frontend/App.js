@@ -36,6 +36,7 @@ import {
   QrCode,
   X,
   Lock,
+  Tag,
 } from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
@@ -44,12 +45,12 @@ import FeedView from './components/FeedView';
 import CalendarView from './components/CalendarView';
 import SideMenu from './components/SideMenu';
 import RoleManagementScreen from './components/RoleManagementScreen';
+import TagManagementScreen from './components/TagManagementScreen';
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
 const SOCKET_URL = 'https://robotech-backend-bc05.onrender.com';
 const ClubLogo = require('./assets/logo.png');
 
-// Configure local notification behavior (show banner and sound when received in foreground)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
@@ -96,73 +97,62 @@ function MainAppContent() {
   const isScanningRef = useRef(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
-  // Keep activeTabRef synchronized for socket listeners
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
   const triggerTestNotification = async () => {
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: '🤖 ROBOTECH Test Alert',
-        body: 'Local notifications are configured and working correctly!',
-        sound: 'default',
-        data: { test: 'data' },
-      },
-      trigger: null, // deliver immediately
-    });
-  } catch (error) {
-    console.error('Error triggering notification:', error);
-    Alert.alert('Error', 'Could not fire notification. Check console logs.');
-  }
-};
-
-  // Request Notification Permissions on App Launch
-  useEffect(() => {
-  const registerForPushNotifications = async () => {
     try {
-      // 1. Create Android Channel FIRST (Required for Android 8+)
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'Default Channel',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#f59e0b',
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: '🤖 ROBOTECH Test Alert',
+          body: 'Local notifications are configured and working correctly!',
           sound: 'default',
-          enableVibrate: true,
-          showBadge: true,
-        });
-      }
-
-      // 2. Request Permissions (Required for iOS & Android 13+)
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-
-      if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-
-      if (finalStatus !== 'granted') {
-        console.log('Notification permissions were not granted.');
-        return;
-      }
-
-      console.log('Notification permissions granted and channel set up.');
-    } catch (err) {
-      console.error('Failed to configure notifications:', err);
+          data: { test: 'data' },
+        },
+        trigger: null,
+      });
+    } catch (error) {
+      console.error('Error triggering notification:', error);
+      Alert.alert('Error', 'Could not fire notification. Check console logs.');
     }
   };
 
-  registerForPushNotifications();
-}, []);
+  useEffect(() => {
+    const registerForPushNotifications = async () => {
+      try {
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('default', {
+            name: 'Default Channel',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#f59e0b',
+            sound: 'default',
+            enableVibrate: true,
+            showBadge: true,
+          });
+        }
 
-  // Immediate State-Switch Navigation
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+
+        if (existingStatus !== 'granted') {
+          const { status } = await Notifications.requestPermissionsAsync();
+          finalStatus = status;
+        }
+
+        if (finalStatus !== 'granted') return;
+      } catch (err) {
+        console.error('Failed to configure notifications:', err);
+      }
+    };
+
+    registerForPushNotifications();
+  }, []);
+
   const changeTab = (newTab) => {
     if (newTab === activeTab) return;
-
     setActiveTab(newTab);
-
     fadeAnim.setValue(0.85);
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -191,7 +181,6 @@ function MainAppContent() {
     checkToken();
   }, []);
 
-  // Socket setup & real-time notification listeners
   useEffect(() => {
     if (token) {
       socketRef.current = io(SOCKET_URL, {
@@ -199,44 +188,28 @@ function MainAppContent() {
         auth: { token },
       });
 
-      // Listen for incoming chat messages
-      // Listen for incoming chat messages
       socketRef.current.on('receive_message', async (msg) => {
-        // Do not notify if the message was sent by the current user
         if (msg?.sender?._id === user?._id || msg?.sender === user?._id) return;
-
-        // Skip notifying if the user is actively viewing the chat tab
         if (activeTabRef.current === 'chat') return;
 
-        // Extract content safely with fallbacks so body is never empty/undefined
-        const senderName = 
-          msg?.sender?.name || 
-          (typeof msg?.sender === 'string' ? 'Club Member' : 'New Message');
-
-        const messageBody = 
-          msg?.content || 
-          msg?.text || 
-          msg?.message || 
-          (msg?.mediaUrl ? '📷 Sent an attachment' : 'Sent you a message.');
+        const senderName = msg?.sender?.name || (typeof msg?.sender === 'string' ? 'Club Member' : 'New Message');
+        const messageBody = msg?.content || msg?.text || msg?.message || (msg?.mediaUrl ? '📷 Sent an attachment' : 'Sent you a message.');
 
         await Notifications.scheduleNotificationAsync({
           content: {
             title: `💬 ${senderName}`,
-            body: String(messageBody), // Force string conversion
+            body: String(messageBody),
             sound: 'default',
             priority: Notifications.AndroidNotificationPriority.HIGH,
             data: { type: 'chat', messageId: msg?._id },
           },
-          trigger: null, // deliver immediately
+          trigger: null,
         });
       });
 
-      // Listen for new events created on the calendar
       socketRef.current.on('event_created', async (eventData) => {
         const eventTitle = eventData?.title || 'New Event Added';
-        const eventDate = eventData?.date
-          ? new Date(eventData.date).toLocaleDateString()
-          : '';
+        const eventDate = eventData?.date ? new Date(eventData.date).toLocaleDateString() : '';
 
         await Notifications.scheduleNotificationAsync({
           content: {
@@ -260,9 +233,7 @@ function MainAppContent() {
 
   const handleDateChange = (event, selectedDate) => {
     setShowDatePicker(Platform.OS === 'ios');
-    if (selectedDate) {
-      setDateOfBirth(selectedDate);
-    }
+    if (selectedDate) setDateOfBirth(selectedDate);
   };
 
   const handleAuth = async () => {
@@ -274,15 +245,9 @@ function MainAppContent() {
       return;
     }
 
-    if (!isLogin) {
-      if (!name.trim()) {
-        setAuthError('Please enter your full name.');
-        return;
-      }
-      if (!inscriptionNumber.trim()) {
-        setAuthError('Please enter your inscription number.');
-        return;
-      }
+    if (!isLogin && (!name.trim() || !inscriptionNumber.trim())) {
+      setAuthError('Please fill in all full name and inscription number.');
+      return;
     }
 
     const endpoint = isLogin ? '/auth/login' : '/auth/register';
@@ -362,30 +327,24 @@ function MainAppContent() {
     }
   };
 
-  // Assembly Check-In QR Handler for Expo Camera
   const handleBarcodeScanned = async ({ data: rawData }) => {
-    if (!permission?.granted) return;
-    if (isSubmittingCheckIn || isScanningRef.current) return;
+    if (!permission?.granted || isSubmittingCheckIn || isScanningRef.current) return;
 
     isScanningRef.current = true;
     setIsSubmittingCheckIn(true);
 
     try {
       let sessionId = null;
-
       if (rawData.startsWith('{')) {
         try {
-          const parsed = JSON.parse(rawData);
-          sessionId = parsed.sessionId || rawData;
+          sessionId = JSON.parse(rawData).sessionId || rawData;
         } catch (e) {
           sessionId = rawData.trim();
         }
       } else if (rawData.includes('sessionId=')) {
-        const match = rawData.match(/sessionId=([^&]+)/);
-        if (match) sessionId = match[1];
+        sessionId = rawData.match(/sessionId=([^&]+)/)?.[1];
       } else if (rawData.includes('robotech://checkin')) {
-        const urlParams = new URLSearchParams(rawData.split('?')[1]);
-        sessionId = urlParams.get('sessionId');
+        sessionId = new URLSearchParams(rawData.split('?')[1]).get('sessionId');
       } else {
         sessionId = rawData.trim();
       }
@@ -407,28 +366,17 @@ function MainAppContent() {
       });
 
       const data = await res.json();
-
       if (res.ok) {
         setScannerVisible(false);
         Alert.alert('Check-In Confirmed! 🎯', data.message || 'You are marked present for this assembly.');
       } else {
         Alert.alert('Check-In Failed', data.error || 'Could not register attendance.', [
-          {
-            text: 'Try Again',
-            onPress: () => {
-              isScanningRef.current = false;
-            },
-          },
+          { text: 'Try Again', onPress: () => { isScanningRef.current = false; } },
         ]);
       }
     } catch (err) {
       Alert.alert('Error', 'Failed to connect to check-in server.', [
-        {
-          text: 'OK',
-          onPress: () => {
-            isScanningRef.current = false;
-          },
-        },
+        { text: 'OK', onPress: () => { isScanningRef.current = false; } },
       ]);
     } finally {
       setIsSubmittingCheckIn(false);
@@ -448,9 +396,7 @@ function MainAppContent() {
   const handleLogout = async () => {
     try {
       await AsyncStorage.multiRemove(['userToken', 'userData']);
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
+      if (socketRef.current) socketRef.current.disconnect();
     } catch (e) {
       console.error('Error during logout:', e);
     } finally {
@@ -469,23 +415,15 @@ function MainAppContent() {
     );
   }
 
-  const isAdmin = user?.role === 'admin' || user?.role === 'Admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'Admin' || user?.role === 'Board';
 
   return (
     <View className="flex-1 bg-slate-950">
       {!token ? (
-        /* --- AUTHENTICATION SCREEN --- */
         <SafeAreaView className="flex-1 bg-slate-950">
           <StatusBar barStyle="light-content" />
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            className="flex-1"
-          >
-            <ScrollView
-              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
-              keyboardShouldPersistTaps="handled"
-              className="p-6 bg-slate-950"
-            >
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
+            <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }} keyboardShouldPersistTaps="handled" className="p-6 bg-slate-950">
               <View className="bg-slate-900 p-7 rounded-3xl border border-amber-500/20 shadow-lg shadow-amber-500/10">
                 <View className="items-center mb-6">
                   <View className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 justify-center items-center mb-3 overflow-hidden">
@@ -588,17 +526,13 @@ function MainAppContent() {
           </KeyboardAvoidingView>
         </SafeAreaView>
       ) : (
-        /* --- MAIN APP INTERFACE --- */
         <SafeAreaView className="flex-1 bg-slate-950" edges={['top', 'left', 'right']}>
           <StatusBar barStyle="light-content" />
 
           {/* Top Header */}
           <View className="flex-row justify-between items-center px-5 py-3.5 border-b border-slate-800/80 bg-slate-900">
             <View className="flex-row items-center gap-3">
-              <TouchableOpacity
-                onPress={() => setSideMenuOpen(true)}
-                className="bg-slate-950 border border-amber-500/30 p-2.5 rounded-xl"
-              >
+              <TouchableOpacity onPress={() => setSideMenuOpen(true)} className="bg-slate-950 border border-amber-500/30 p-2.5 rounded-xl">
                 <Menu size={18} color="#f59e0b" />
               </TouchableOpacity>
 
@@ -616,31 +550,20 @@ function MainAppContent() {
             <TouchableOpacity
               onPress={() => changeTab('settings')}
               className={`bg-slate-950 border p-2.5 rounded-xl ${
-                activeTab === 'settings'
-                  ? 'bg-amber-500/20 border-amber-500/60'
-                  : 'border-amber-500/30'
+                activeTab === 'settings' ? 'bg-amber-500/20 border-amber-500/60' : 'border-amber-500/30'
               }`}
             >
               <Settings size={18} color={activeTab === 'settings' ? '#f59e0b' : '#94a3b8'} />
             </TouchableOpacity>
           </View>
 
-          {/* Animated Tab Content */}
+          {/* Tab Views */}
           <Animated.View className="flex-1" style={{ opacity: fadeAnim }}>
             {activeTab === 'feed' && <FeedView user={user} token={token} />}
-
-            {activeTab === 'chat' && (
-              <ChatView user={user} token={token} socket={socketRef.current} />
-            )}
-
-            {activeTab === 'calendar' && (
-              <CalendarView user={user} token={token} />
-            )}
-            {/* ➕ ADD THIS LINE FOR ROLE MANAGEMENT */}
-            {activeTab === 'roles' && isAdmin && (
-              <RoleManagementScreen token={token} currentUserId={user?._id} />
-            )}
-
+            {activeTab === 'chat' && <ChatView user={user} token={token} socket={socketRef.current} />}
+            {activeTab === 'calendar' && <CalendarView user={user} token={token} />}
+            {activeTab === 'roles' && isAdmin && <RoleManagementScreen token={token} currentUserId={user?._id} />}
+            {activeTab === 'tags' && isAdmin && <TagManagementScreen token={token} />}
             {activeTab === 'admin' && isAdmin && <AdminView token={token} />}
 
             {activeTab === 'settings' && (
@@ -648,51 +571,26 @@ function MainAppContent() {
                 <Text className="text-amber-500 font-black text-xl mb-1 tracking-wider">ACCOUNT SETTINGS</Text>
                 <Text className="text-slate-400 text-xs mb-6">Manage profile details and event check-ins</Text>
 
-                {/* General Assembly Quick Check-In Card */}
                 <View className="bg-slate-900 border border-amber-500/30 p-5 rounded-2xl mb-5 flex-row justify-between items-center shadow-lg shadow-amber-500/5">
                   <View className="flex-1 mr-3">
                     <Text className="text-white font-bold text-sm mb-1">General Assembly Check-In</Text>
-                    <Text className="text-slate-400 text-xs">
-                      Scan the host QR code at weekly meetings to mark your attendance.
-                    </Text>
+                    <Text className="text-slate-400 text-xs">Scan the host QR code at weekly meetings to mark your attendance.</Text>
                   </View>
 
-                  <TouchableOpacity
-                    onPress={openScannerModal}
-                    className="bg-amber-500 p-3.5 rounded-xl flex-row items-center gap-1.5 active:scale-95"
-                  >
+                  <TouchableOpacity onPress={openScannerModal} className="bg-amber-500 p-3.5 rounded-xl flex-row items-center gap-1.5 active:scale-95">
                     <QrCode size={16} color="#0f172a" />
-                    <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">
-                      Scan
-                    </Text>
+                    <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">Scan</Text>
                   </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  onPress={triggerTestNotification}
-                  activeOpacity={0.8}
-                  className="bg-amber-500/20 border border-amber-500/50 p-4 rounded-xl items-center my-4"
-                >
-                  <Text className="text-amber-500 font-bold text-xs uppercase tracking-wider">
-                    🔔 Trigger Test Notification
-                  </Text>
+
+                <TouchableOpacity onPress={triggerTestNotification} activeOpacity={0.8} className="bg-amber-500/20 border border-amber-500/50 p-4 rounded-xl items-center my-4">
+                  <Text className="text-amber-500 font-bold text-xs uppercase tracking-wider">🔔 Trigger Test Notification</Text>
                 </TouchableOpacity>
 
                 {settingsMsg.text ? (
-                  <View
-                    className={`p-3.5 rounded-2xl mb-4 border flex-row items-center gap-2 ${
-                      settingsMsg.type === 'error'
-                        ? 'bg-rose-500/10 border-rose-500/30'
-                        : 'bg-emerald-500/10 border-emerald-500/30'
-                    }`}
-                  >
+                  <View className={`p-3.5 rounded-2xl mb-4 border flex-row items-center gap-2 ${settingsMsg.type === 'error' ? 'bg-rose-500/10 border-rose-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}`}>
                     <CheckCircle2 size={16} color={settingsMsg.type === 'error' ? '#fb7185' : '#34d399'} />
-                    <Text
-                      className={`text-xs font-bold ${
-                        settingsMsg.type === 'error' ? 'text-rose-400' : 'text-emerald-400'
-                      }`}
-                    >
-                      {settingsMsg.text}
-                    </Text>
+                    <Text className={`text-xs font-bold ${settingsMsg.type === 'error' ? 'text-rose-400' : 'text-emerald-400'}`}>{settingsMsg.text}</Text>
                   </View>
                 ) : null}
 
@@ -703,29 +601,15 @@ function MainAppContent() {
                   </View>
 
                   <Text className="text-slate-400 text-xs mb-1.5 font-medium">Display Name</Text>
-                  <TextInput
-                    value={updateName}
-                    onChangeText={setUpdateName}
-                    placeholder="Full Name"
-                    placeholderTextColor="#475569"
-                    className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
-                  />
+                  <TextInput value={updateName} onChangeText={setUpdateName} placeholder="Full Name" placeholderTextColor="#475569" className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium" />
 
                   <Text className="text-slate-400 text-xs mb-1.5 font-medium">Email Address</Text>
-                  <TextInput
-                    value={user?.email}
-                    editable={false}
-                    className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-3"
-                  />
+                  <TextInput value={user?.email} editable={false} className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-3" />
 
                   {user?.inscriptionNumber && (
                     <>
                       <Text className="text-slate-400 text-xs mb-1.5 font-medium">Inscription Number</Text>
-                      <TextInput
-                        value={user?.inscriptionNumber}
-                        editable={false}
-                        className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-2"
-                      />
+                      <TextInput value={user?.inscriptionNumber} editable={false} className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-2" />
                     </>
                   )}
                 </View>
@@ -737,31 +621,13 @@ function MainAppContent() {
                   </View>
 
                   <Text className="text-slate-400 text-xs mb-1.5 font-medium">Current Password</Text>
-                  <TextInput
-                    value={currentPassword}
-                    onChangeText={setCurrentPassword}
-                    secureTextEntry
-                    placeholder="Enter current password"
-                    placeholderTextColor="#475569"
-                    className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium"
-                  />
+                  <TextInput value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Enter current password" placeholderTextColor="#475569" className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm mb-3 font-medium" />
 
                   <Text className="text-slate-400 text-xs mb-1.5 font-medium">New Password (Optional)</Text>
-                  <TextInput
-                    value={newPassword}
-                    onChangeText={setNewPassword}
-                    secureTextEntry
-                    placeholder="Leave empty to keep current password"
-                    placeholderTextColor="#475569"
-                    className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm font-medium"
-                  />
+                  <TextInput value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="Leave empty to keep current password" placeholderTextColor="#475569" className="bg-slate-950 text-white px-4 py-3.5 rounded-xl border border-slate-800 text-sm font-medium" />
                 </View>
 
-                <TouchableOpacity
-                  onPress={handleUpdateProfile}
-                  activeOpacity={0.8}
-                  className="bg-amber-500 py-4 rounded-xl items-center mb-10 shadow-md shadow-amber-500/20"
-                >
+                <TouchableOpacity onPress={handleUpdateProfile} activeOpacity={0.8} className="bg-amber-500 py-4 rounded-xl items-center mb-10 shadow-md shadow-amber-500/20">
                   <Text className="text-slate-950 font-black text-xs uppercase tracking-widest">Save Changes</Text>
                 </TouchableOpacity>
               </ScrollView>
@@ -769,126 +635,48 @@ function MainAppContent() {
           </Animated.View>
 
           {/* Bottom Bar */}
-          <View
-            className="flex-row border-t border-slate-800/80 bg-slate-900 px-3 pt-3 gap-1.5"
-            style={{ paddingBottom: Math.max(insets.bottom, 12) }}
-          >
-            <TouchableOpacity
-              onPress={() => changeTab('feed')}
-              activeOpacity={0.6}
-              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-                activeTab === 'feed'
-                  ? 'bg-amber-500/15 border border-amber-500/40'
-                  : 'bg-transparent'
-              }`}
-            >
-              <LayoutGrid size={15} color={activeTab === 'feed' ? '#f59e0b' : '#64748b'} />
-              <Text
-                className={`font-bold text-[11px] tracking-wide ${
-                  activeTab === 'feed' ? 'text-amber-500' : 'text-slate-400'
-                }`}
-              >
-                Feed
-              </Text>
+          <View className="flex-row border-t border-slate-800/80 bg-slate-900 px-3 pt-3 gap-1" style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
+            <TouchableOpacity onPress={() => changeTab('feed')} activeOpacity={0.6} className={`flex-1 py-2 rounded-xl justify-center items-center flex-row gap-1 ${activeTab === 'feed' ? 'bg-amber-500/15 border border-amber-500/40' : ''}`}>
+              <LayoutGrid size={14} color={activeTab === 'feed' ? '#f59e0b' : '#64748b'} />
+              <Text className={`font-bold text-[10px] ${activeTab === 'feed' ? 'text-amber-500' : 'text-slate-400'}`}>Feed</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => changeTab('chat')}
-              activeOpacity={0.6}
-              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-                activeTab === 'chat'
-                  ? 'bg-amber-500/15 border border-amber-500/40'
-                  : 'bg-transparent'
-              }`}
-            >
-              <MessageSquare size={15} color={activeTab === 'chat' ? '#f59e0b' : '#64748b'} />
-              <Text
-                className={`font-bold text-[11px] tracking-wide ${
-                  activeTab === 'chat' ? 'text-amber-500' : 'text-slate-400'
-                }`}
-              >
-                Chat
-              </Text>
+            <TouchableOpacity onPress={() => changeTab('chat')} activeOpacity={0.6} className={`flex-1 py-2 rounded-xl justify-center items-center flex-row gap-1 ${activeTab === 'chat' ? 'bg-amber-500/15 border border-amber-500/40' : ''}`}>
+              <MessageSquare size={14} color={activeTab === 'chat' ? '#f59e0b' : '#64748b'} />
+              <Text className={`font-bold text-[10px] ${activeTab === 'chat' ? 'text-amber-500' : 'text-slate-400'}`}>Chat</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => changeTab('calendar')}
-              activeOpacity={0.6}
-              className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-                activeTab === 'calendar'
-                  ? 'bg-amber-500/15 border border-amber-500/40'
-                  : 'bg-transparent'
-              }`}
-            >
-              <CalendarIcon size={15} color={activeTab === 'calendar' ? '#f59e0b' : '#64748b'} />
-              <Text
-                className={`font-bold text-[11px] tracking-wide ${
-                  activeTab === 'calendar' ? 'text-amber-500' : 'text-slate-400'
-                }`}
-              >
-                Events
-              </Text>
+            <TouchableOpacity onPress={() => changeTab('calendar')} activeOpacity={0.6} className={`flex-1 py-2 rounded-xl justify-center items-center flex-row gap-1 ${activeTab === 'calendar' ? 'bg-amber-500/15 border border-amber-500/40' : ''}`}>
+              <CalendarIcon size={14} color={activeTab === 'calendar' ? '#f59e0b' : '#64748b'} />
+              <Text className={`font-bold text-[10px] ${activeTab === 'calendar' ? 'text-amber-500' : 'text-slate-400'}`}>Events</Text>
             </TouchableOpacity>
 
             {isAdmin && (
-  <>
-    <TouchableOpacity
-      onPress={() => changeTab('admin')}
-      activeOpacity={0.6}
-      className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-        activeTab === 'admin'
-          ? 'bg-amber-500/15 border border-amber-500/40'
-          : 'bg-transparent'
-      }`}
-    >
-      <ShieldAlert size={15} color={activeTab === 'admin' ? '#f59e0b' : '#64748b'} />
-      <Text
-        className={`font-bold text-[11px] tracking-wide ${
-          activeTab === 'admin' ? 'text-amber-500' : 'text-slate-400'
-        }`}
-      >
-        Admin
-      </Text>
-    </TouchableOpacity>
+              <>
+                <TouchableOpacity onPress={() => changeTab('admin')} activeOpacity={0.6} className={`flex-1 py-2 rounded-xl justify-center items-center flex-row gap-1 ${activeTab === 'admin' ? 'bg-amber-500/15 border border-amber-500/40' : ''}`}>
+                  <ShieldAlert size={14} color={activeTab === 'admin' ? '#f59e0b' : '#64748b'} />
+                  <Text className={`font-bold text-[10px] ${activeTab === 'admin' ? 'text-amber-500' : 'text-slate-400'}`}>Admin</Text>
+                </TouchableOpacity>
 
-    <TouchableOpacity
-      onPress={() => changeTab('roles')}
-      activeOpacity={0.6}
-      className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-        activeTab === 'roles'
-          ? 'bg-amber-500/15 border border-amber-500/40'
-          : 'bg-transparent'
-      }`}
-    >
-      <User size={15} color={activeTab === 'roles' ? '#f59e0b' : '#64748b'} />
-      <Text
-        className={`font-bold text-[11px] tracking-wide ${
-          activeTab === 'roles' ? 'text-amber-500' : 'text-slate-400'
-        }`}
-      >
-        Roles
-      </Text>
-    </TouchableOpacity>
-  </>
-)}
+                <TouchableOpacity onPress={() => changeTab('roles')} activeOpacity={0.6} className={`flex-1 py-2 rounded-xl justify-center items-center flex-row gap-1 ${activeTab === 'roles' ? 'bg-amber-500/15 border border-amber-500/40' : ''}`}>
+                  <User size={14} color={activeTab === 'roles' ? '#f59e0b' : '#64748b'} />
+                  <Text className={`font-bold text-[10px] ${activeTab === 'roles' ? 'text-amber-500' : 'text-slate-400'}`}>Roles</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity onPress={() => changeTab('tags')} activeOpacity={0.6} className={`flex-1 py-2 rounded-xl justify-center items-center flex-row gap-1 ${activeTab === 'tags' ? 'bg-amber-500/15 border border-amber-500/40' : ''}`}>
+                  <Tag size={14} color={activeTab === 'tags' ? '#f59e0b' : '#64748b'} />
+                  <Text className={`font-bold text-[10px] ${activeTab === 'tags' ? 'text-amber-500' : 'text-slate-400'}`}>Tags</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {/* General Assembly Attendance QR Scanner Modal */}
-          <Modal
-            visible={scannerVisible}
-            animationType="slide"
-            transparent={false}
-            onRequestClose={closeScannerModal}
-          >
+          <Modal visible={scannerVisible} animationType="slide" transparent={false} onRequestClose={closeScannerModal}>
             <SafeAreaView className="flex-1 bg-slate-950 justify-between">
               <View className="flex-row justify-between items-center p-5 border-b border-slate-800">
-                <Text className="text-white font-black text-base tracking-wide">
-                  📷 Scan Assembly Code
-                </Text>
-                <TouchableOpacity
-                  onPress={closeScannerModal}
-                  className="bg-slate-900 border border-slate-800 p-2 rounded-xl"
-                >
+                <Text className="text-white font-black text-base tracking-wide">📷 Scan Assembly Code</Text>
+                <TouchableOpacity onPress={closeScannerModal} className="bg-slate-900 border border-slate-800 p-2 rounded-xl">
                   <X size={20} color="#94a3b8" />
                 </TouchableOpacity>
               </View>
@@ -898,23 +686,12 @@ function MainAppContent() {
                   <ActivityIndicator size="large" color="#f59e0b" />
                 ) : !permission.granted ? (
                   <View className="p-6 items-center">
-                    <Text className="text-slate-300 text-center mb-4 font-medium">
-                      Camera permission is required to scan QR codes.
-                    </Text>
+                    <Text className="text-slate-300 text-center mb-4 font-medium">Camera permission is required to scan QR codes.</Text>
                     <Button onPress={requestPermission} title="Grant Permission" color="#f59e0b" />
                   </View>
                 ) : (
                   <>
-                    <CameraView
-                      style={StyleSheet.absoluteFillObject}
-                      facing="back"
-                      barcodeScannerSettings={{
-                        barcodeTypes: ['qr'],
-                      }}
-                      onBarcodeScanned={handleBarcodeScanned}
-                    />
-
-                    {/* Camera Overlay Reticle */}
+                    <CameraView style={StyleSheet.absoluteFillObject} facing="back" barcodeScannerSettings={{ barcodeTypes: ['qr'] }} onBarcodeScanned={handleBarcodeScanned} />
                     <View className="w-64 h-64 border-2 border-amber-500/80 rounded-3xl bg-amber-500/5 justify-center items-center">
                       <View className="w-56 h-56 border border-dashed border-amber-400/40 rounded-2xl" />
                     </View>
@@ -924,17 +701,13 @@ function MainAppContent() {
                 {isSubmittingCheckIn && (
                   <View className="absolute inset-0 bg-slate-950/80 justify-center items-center">
                     <ActivityIndicator size="large" color="#f59e0b" />
-                    <Text className="text-amber-500 font-bold text-xs uppercase tracking-wider mt-3">
-                      Registering Check-In...
-                    </Text>
+                    <Text className="text-amber-500 font-bold text-xs uppercase tracking-wider mt-3">Registering Check-In...</Text>
                   </View>
                 )}
               </View>
 
               <View className="p-6 bg-slate-900 border-t border-slate-800">
-                <Text className="text-slate-300 text-xs text-center font-medium">
-                  Point camera directly at the Assembly host screen to verify your presence.
-                </Text>
+                <Text className="text-slate-300 text-xs text-center font-medium">Point camera directly at the Assembly host screen to verify your presence.</Text>
               </View>
             </SafeAreaView>
           </Modal>

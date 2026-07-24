@@ -132,27 +132,99 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
     }
   };
 
+  const handleDeleteUser = (user) => {
+    // Prevent self-deletion
+    if (user._id === currentUserId) {
+      Alert.alert('Action Restricted', 'You cannot delete your own account from the admin dashboard.');
+      return;
+    }
+
+    Alert.alert(
+      'Delete User',
+      `Are you sure you want to permanently delete ${user.name}? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteUser(user._id),
+        },
+      ]
+    );
+  };
+
+  const deleteUser = async (userId) => {
+    if (!token) {
+      Alert.alert('Authentication Error', 'No active login token found.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BASE_URL}/api/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('Non-JSON delete response:', text);
+        Alert.alert('Server Error', `Could not delete user (Status ${response.status}).`);
+        return;
+      }
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Remove user from local state immediately
+        setUsers((prevUsers) => prevUsers.filter((u) => u._id !== userId));
+      } else {
+        Alert.alert('Delete Failed', data.error || data.message || 'Could not delete user.');
+      }
+    } catch (err) {
+      console.error('Delete user error details:', err);
+      Alert.alert('Error', 'Failed to delete user.');
+    }
+  };
+
   const renderUserItem = ({ item }) => {
     const isAdmin = item.role === 'admin';
+    const isSelf = item._id === currentUserId;
 
     return (
       <View style={styles.card}>
         <View style={styles.userInfo}>
-          <Text style={styles.userName}>{item.name}</Text>
+          <Text style={styles.userName}>
+            {item.name} {isSelf && <Text style={styles.selfLabel}>(You)</Text>}
+          </Text>
           <Text style={styles.userEmail}>{item.email}</Text>
           {item.inscriptionNumber && (
             <Text style={styles.userSubText}>ID: {item.inscriptionNumber}</Text>
           )}
         </View>
 
-        <TouchableOpacity
-          style={[styles.badge, isAdmin ? styles.adminBadge : styles.memberBadge]}
-          onPress={() => handleToggleRole(item)}
-        >
-          <Text style={[styles.badgeText, isAdmin ? styles.adminText : styles.memberText]}>
-            {isAdmin ? '🛡️ Admin' : '👤 Member'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.actionsContainer}>
+          <TouchableOpacity
+            style={[styles.badge, isAdmin ? styles.adminBadge : styles.memberBadge]}
+            onPress={() => handleToggleRole(item)}
+          >
+            <Text style={[styles.badgeText, isAdmin ? styles.adminText : styles.memberText]}>
+              {isAdmin ? '🛡️ Admin' : '👤 Member'}
+            </Text>
+          </TouchableOpacity>
+
+          {!isSelf && (
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={() => handleDeleteUser(item)}
+            >
+              <Text style={styles.deleteButtonText}>🗑️</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     );
   };
@@ -196,14 +268,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 10,
   },
-  userInfo: { flex: 1 },
+  userInfo: { flex: 1, marginRight: 10 },
   userName: { fontSize: 16, fontWeight: '600', color: '#f8fafc' },
+  selfLabel: { fontSize: 12, color: '#f59e0b', fontWeight: 'normal' },
   userEmail: { fontSize: 13, color: '#94a3b8', marginTop: 2 },
   userSubText: { fontSize: 11, color: '#64748b', marginTop: 2 },
-  badge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  actionsContainer: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  badge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20 },
   adminBadge: { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderWidth: 1, borderColor: '#f59e0b' },
   memberBadge: { backgroundColor: '#1e293b' },
-  badgeText: { fontSize: 13, fontWeight: '600' },
+  badgeText: { fontSize: 12, fontWeight: '600' },
   adminText: { color: '#f59e0b' },
   memberText: { color: '#94a3b8' },
+  deleteButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteButtonText: { fontSize: 13 },
 });
