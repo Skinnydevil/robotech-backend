@@ -10,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  Alert,
 } from 'react-native';
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
@@ -26,6 +27,10 @@ export default function ChatView({ user, token, socket }) {
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
   const [groupName, setGroupName] = useState('');
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+
+  // State for message actions modal on long press
+  const [selectedMessage, setSelectedMessage] = useState(null);
+  const [showMsgActionModal, setShowMsgActionModal] = useState(false);
 
   const flatListRef = useRef(null);
 
@@ -110,12 +115,20 @@ export default function ChatView({ user, token, socket }) {
       }
     };
 
+    const handleMessageDeleted = ({ messageId }) => {
+      setMessages((prev) => prev.filter((m) => m._id !== messageId));
+    };
+
     socket.off('receive_private_message', handleNewMessage);
     socket.on('receive_private_message', handleNewMessage);
+
+    socket.off('message_deleted', handleMessageDeleted);
+    socket.on('message_deleted', handleMessageDeleted);
 
     return () => {
       socket.emit('leave_conversation', activeConv._id);
       socket.off('receive_private_message', handleNewMessage);
+      socket.off('message_deleted', handleMessageDeleted);
     };
   }, [activeConv, socket]);
 
@@ -148,6 +161,26 @@ export default function ChatView({ user, token, socket }) {
       senderAvatar: user.avatar,
       senderTags: user.tags || [],
     });
+  };
+
+  const handleDeleteMessage = async (msgId) => {
+    try {
+      const res = await fetch(`${API_URL}/messages/${msgId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        setMessages((prev) => prev.filter((m) => m._id !== msgId));
+        setShowMsgActionModal(false);
+        setSelectedMessage(null);
+      } else {
+        Alert.alert('Error', 'Could not delete the message.');
+      }
+    } catch (err) {
+      console.error('Failed deleting message:', err);
+      Alert.alert('Error', 'Network request failed.');
+    }
   };
 
   const handleStartChat = async (recipientId = null) => {
@@ -283,7 +316,7 @@ export default function ChatView({ user, token, socket }) {
                   </View>
                 )}
 
-                <View className={`flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                <View className={`flex-col shrink max-w-[80%] ${isMe ? 'items-end' : 'items-start'}`}>
                   {!isMe && (
                     <View className="mb-1 px-1">
                       <Text className="text-slate-500 text-[10px] font-medium">
@@ -292,8 +325,15 @@ export default function ChatView({ user, token, socket }) {
                       {renderTagBadges(senderTags)}
                     </View>
                   )}
-                  <View
-                    className={`max-w-[80%] px-4 py-3 rounded-2xl ${
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onLongPress={() => {
+                      if (isMe && !item.isTemp) {
+                        setSelectedMessage(item);
+                        setShowMsgActionModal(true);
+                      }
+                    }}
+                    className={`px-4 py-3 rounded-2xl ${
                       isMe
                         ? 'bg-amber-500 rounded-br-none shadow-md shadow-amber-500/10'
                         : 'bg-[#0b0f19] border border-slate-800/80 rounded-bl-none shadow-md'
@@ -306,12 +346,41 @@ export default function ChatView({ user, token, socket }) {
                     >
                       {item.text}
                     </Text>
-                  </View>
+                  </TouchableOpacity>
                 </View>
               </View>
             );
           }}
         />
+
+        {/* Message Action Modal (Delete Option) */}
+        <Modal visible={showMsgActionModal} animationType="fade" transparent>
+          <View className="flex-1 bg-black/60 justify-center items-center p-6">
+            <View className="bg-[#0b0f19] border border-slate-800 w-full max-w-xs rounded-2xl p-5 shadow-2xl">
+              <Text className="text-white font-bold text-base mb-2 text-center">Message Options</Text>
+              <Text className="text-slate-400 text-xs text-center mb-5" numberOfLines={2}>
+                "{selectedMessage?.text}"
+              </Text>
+
+              <TouchableOpacity
+                onPress={() => handleDeleteMessage(selectedMessage?._id)}
+                className="bg-rose-500/20 border border-rose-500/50 py-3 rounded-xl mb-2 items-center active:scale-95"
+              >
+                <Text className="text-rose-400 font-bold text-xs uppercase tracking-wider">Delete Message</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setShowMsgActionModal(false);
+                  setSelectedMessage(null);
+                }}
+                className="bg-slate-900 border border-slate-800 py-3 rounded-xl items-center active:scale-95"
+              >
+                <Text className="text-slate-300 font-bold text-xs uppercase tracking-wider">Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
 
         <View className="flex-row gap-2 mt-2 pt-3 border-t border-slate-800/80">
           <TextInput

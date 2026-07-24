@@ -1202,3 +1202,24 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
+// DELETE message endpoint
+app.delete('/api/messages/:id', verifyToken, async (req, res) => {
+  try {
+    const message = await ChatMessage.findById(req.params.id);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+
+    // Verify ownership
+    if (message.senderId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Unauthorized to delete this message' });
+    }
+
+    await ChatMessage.findByIdAndDelete(req.params.id);
+
+    // Emit socket event to clear it on all connected clients in that room
+    io.to(message.conversationId.toString()).emit('message_deleted', { messageId: message._id });
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
