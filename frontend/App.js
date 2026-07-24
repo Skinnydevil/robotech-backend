@@ -37,6 +37,7 @@ import {
   X,
   Lock,
   Tag,
+  Plus,
 } from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
@@ -86,6 +87,13 @@ function MainAppContent() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [settingsMsg, setSettingsMsg] = useState({ type: '', text: '' });
+
+  // Tag Selection & Creation State for Members
+  const [availableTags, setAvailableTags] = useState([]);
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [isPublicTagAllowed, setIsPublicTagAllowed] = useState(false);
+  const [newCustomTagName, setNewCustomTagName] = useState('');
+  const [newCustomTagColor, setNewCustomTagColor] = useState('#f59e0b');
 
   // Assembly Check-In Scanner State
   const [scannerVisible, setScannerVisible] = useState(false);
@@ -171,6 +179,7 @@ function MainAppContent() {
           setToken(storedToken);
           setUser(parsedUser);
           setUpdateName(parsedUser.name || '');
+          setSelectedTags(parsedUser.tags || []);
         }
       } catch (err) {
         console.error('Failed to load session:', err);
@@ -180,6 +189,31 @@ function MainAppContent() {
     };
     checkToken();
   }, []);
+
+  useEffect(() => {
+    const fetchMemberTagsAndSettings = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch(`${API_URL}/tags`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setAvailableTags(Array.isArray(data) ? data : data.tags || []);
+        }
+        const settingsRes = await fetch(`${API_URL}/tags/settings`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (settingsRes.ok) {
+          const settingsData = await settingsRes.json();
+          setIsPublicTagAllowed(!!settingsData.allowPublicCreation);
+        }
+      } catch (e) {
+        console.error('Error loading tags/settings config:', e);
+      }
+    };
+    fetchMemberTagsAndSettings();
+  }, [token]);
 
   useEffect(() => {
     if (token) {
@@ -246,7 +280,7 @@ function MainAppContent() {
     }
 
     if (!isLogin && (!name.trim() || !inscriptionNumber.trim())) {
-      setAuthError('Please fill in all full name and inscription number.');
+      setAuthError('Please fill in full name and inscription number.');
       return;
     }
 
@@ -280,6 +314,7 @@ function MainAppContent() {
         setToken(data.token);
         setUser(data.user);
         setUpdateName(data.user.name || '');
+        setSelectedTags(data.user.tags || []);
       } else {
         setIsLogin(true);
         setName('');
@@ -290,6 +325,42 @@ function MainAppContent() {
       }
     } catch (err) {
       setAuthError('Network connection error. Check your backend status.');
+    }
+  };
+
+  const handleToggleMemberTag = (tagName) => {
+    let updated;
+    if (selectedTags.includes(tagName)) {
+      updated = selectedTags.filter((t) => t !== tagName);
+    } else {
+      updated = [...selectedTags, tagName];
+    }
+    setSelectedTags(updated);
+  };
+
+  const handleCreateCustomTag = async () => {
+    const trimmed = newCustomTagName.trim();
+    if (!trimmed) return;
+    try {
+      const res = await fetch(`${API_URL}/tags`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: trimmed, color: newCustomTagColor }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const createdTag = data.tag || data;
+        setAvailableTags((prev) => [...prev, createdTag]);
+        setSelectedTags((prev) => [...prev, createdTag.name]);
+        setNewCustomTagName('');
+      } else {
+        Alert.alert('Error', data.error || 'Could not create tag.');
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Network error creating tag.');
     }
   };
 
@@ -307,6 +378,7 @@ function MainAppContent() {
           name: updateName,
           currentPassword,
           newPassword: newPassword || undefined,
+          tags: selectedTags,
         }),
       });
 
@@ -316,7 +388,7 @@ function MainAppContent() {
         return;
       }
 
-      const updatedUser = { ...user, name: updateName };
+      const updatedUser = { ...user, name: updateName, tags: selectedTags };
       setUser(updatedUser);
       await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
       setCurrentPassword('');
@@ -611,6 +683,57 @@ function MainAppContent() {
                       <Text className="text-slate-400 text-xs mb-1.5 font-medium">Inscription Number</Text>
                       <TextInput value={user?.inscriptionNumber} editable={false} className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-2" />
                     </>
+                  )}
+                </View>
+
+                {/* Member Tag Selection / Custom Creation Box */}
+                <View className="bg-slate-900 p-5 rounded-2xl border border-slate-800 mb-5">
+                  <View className="flex-row items-center gap-2 mb-3">
+                    <Tag size={16} color="#f59e0b" />
+                    <Text className="text-slate-200 font-bold text-xs uppercase tracking-wider">My Tags & Specializations</Text>
+                  </View>
+                  <Text className="text-slate-400 text-xs mb-3">Select available tags or add custom tags below.</Text>
+
+                  <View className="flex-row flex-wrap gap-2 mb-4">
+                    {availableTags.map((t) => {
+                      const isSelected = selectedTags.includes(t.name);
+                      return (
+                        <TouchableOpacity
+                          key={t._id || t.name}
+                          onPress={() => handleToggleMemberTag(t.name)}
+                          style={{
+                            backgroundColor: isSelected ? `${t.color || '#f59e0b'}30` : '#0f172a',
+                            borderColor: isSelected ? (t.color || '#f59e0b') : '#334155',
+                          }}
+                          className="border px-3 py-2 rounded-xl flex-row items-center gap-1.5"
+                        >
+                          <Tag size={12} color={t.color || '#f59e0b'} />
+                          <Text className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-400'}`}>
+                            {t.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {isPublicTagAllowed && (
+                    <View className="border-t border-slate-800 pt-3 mt-2">
+                      <Text className="text-slate-300 font-bold text-xs mb-2">Create Custom Tag</Text>
+                      <TextInput
+                        placeholder="Custom tag name..."
+                        placeholderTextColor="#475569"
+                        value={newCustomTagName}
+                        onChangeText={setNewCustomTagName}
+                        className="bg-slate-950 text-white px-3 py-2.5 rounded-xl border border-slate-800 text-xs mb-2 font-medium"
+                      />
+                      <TouchableOpacity
+                        onPress={handleCreateCustomTag}
+                        className="bg-amber-500/20 border border-amber-500/50 py-2.5 rounded-xl items-center flex-row justify-center gap-1"
+                      >
+                        <Plus size={14} color="#f59e0b" />
+                        <Text className="text-amber-500 font-bold text-xs uppercase">Add Custom Tag</Text>
+                      </TouchableOpacity>
+                    </View>
                   )}
                 </View>
 
