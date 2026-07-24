@@ -80,7 +80,7 @@ const sendPushNotifications = async (tokens, title, body, data = {}) => {
 // ==========================================
 mongoose
   .connect(process.env.MONGO_URI, {
-    family: 4, // Forces IPv4 resolution for MongoDB Atlas SRV lookup
+    family: 4,
   })
   .then(() => console.log('🔌 Connected securely to MongoDB Cloud Database'))
   .catch((err) => console.error('❌ Database connection failed:', err));
@@ -92,6 +92,7 @@ const UserSchema = new mongoose.Schema(
     password: { type: String, required: true },
     inscriptionNumber: { type: String, required: true, unique: true, sparse: true },
     dateOfBirth: { type: Date, required: false },
+    avatar: { type: String, default: null },
     role: { 
       type: String, 
       enum: ['pending', 'member', 'admin', 'board', 'Pending', 'Member', 'Admin', 'Board'], 
@@ -142,7 +143,6 @@ const authenticateToken = (req, res, next) => {
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Invalid or expired token.' });
     
-    // Normalize user ID property across token payloads
     req.user = {
       ...user,
       _id: user.id || user._id,
@@ -259,6 +259,7 @@ app.post('/api/auth/login', async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        avatar: user.avatar || null,
         inscriptionNumber: user.inscriptionNumber,
         dateOfBirth: user.dateOfBirth,
         tags: user.tags || [],
@@ -319,7 +320,7 @@ app.put('/api/tags/:id', authenticateToken, requireAdmin, async (req, res) => {
     const updatedTag = await Tag.findByIdAndUpdate(
       req.params.id,
       { name, color, description, isPublic },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
 
     if (!updatedTag) {
@@ -360,7 +361,7 @@ app.post('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req,
     const user = await User.findByIdAndUpdate(
       req.params.userId,
       { $addToSet: { tags: { $each: tagIds } } },
-      { new: true }
+      { returnDocument: 'after' }
     ).select('-password').populate('tags');
 
     if (!user) {
@@ -541,7 +542,7 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
     const updatedUser = await User.findByIdAndUpdate(
       targetUserId,
       { role: role },
-      { new: true, select: '-password' }
+      { returnDocument: 'after', select: '-password' }
     );
 
     if (!updatedUser) {
@@ -625,7 +626,7 @@ app.put('/api/admin/assembly/:id/close', authenticateToken, requireAdmin, async 
     const session = await AssemblySession.findByIdAndUpdate(
       req.params.id,
       { status: 'closed' },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!session) {
@@ -643,7 +644,7 @@ app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, as
   try {
     const session = await AssemblySession.findById(req.params.id).populate(
       'attendees.userId',
-      'name email inscriptionNumber'
+      'name email inscriptionNumber avatar'
     );
 
     if (!session) {
@@ -655,6 +656,7 @@ app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, as
       name: item.userId?.name || 'Member',
       email: item.userId?.email || '',
       inscriptionNumber: item.userId?.inscriptionNumber || 'N/A',
+      avatar: item.userId?.avatar || null,
       timestamp: item.checkedInAt,
     }));
 
@@ -672,7 +674,7 @@ app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
   try {
     const activeSession = await AssemblySession.findOne({ status: 'active' }).populate(
       'attendees.userId',
-      'name email inscriptionNumber'
+      'name email inscriptionNumber avatar'
     );
     res.json(activeSession || null);
   } catch (err) {
@@ -723,7 +725,7 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
 app.get('/api/assembly/sessions', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const sessions = await AssemblySession.find()
-      .populate('attendees.userId', 'name email inscriptionNumber')
+      .populate('attendees.userId', 'name email inscriptionNumber avatar')
       .sort({ createdAt: -1 });
     res.json(sessions);
   } catch (err) {
@@ -739,7 +741,7 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
     const posts = await Post.find()
       .populate({
         path: 'author',
-        select: 'name email role tags',
+        select: 'name email role avatar tags',
         populate: { path: 'tags' },
       })
       .populate('comments.authorId', 'name avatar')
@@ -781,7 +783,7 @@ app.post('/api/posts', authenticateToken, upload.single('media'), async (req, re
 
     const populatedPost = await Post.findById(newPost._id).populate({
       path: 'author',
-      select: 'name email role tags',
+      select: 'name email role avatar tags',
       populate: { path: 'tags' },
     });
 
@@ -811,7 +813,7 @@ app.put('/api/posts/:id/like', authenticateToken, async (req, res) => {
     const updatedPost = await Post.findById(req.params.id)
       .populate({
         path: 'author',
-        select: 'name email role tags',
+        select: 'name email role avatar tags',
         populate: { path: 'tags' },
       })
       .populate('comments.authorId', 'name avatar');
@@ -846,7 +848,7 @@ app.post('/api/posts/:id/comment', authenticateToken, async (req, res) => {
     const updatedPost = await Post.findById(req.params.id)
       .populate({
         path: 'author',
-        select: 'name email role tags',
+        select: 'name email role avatar tags',
         populate: { path: 'tags' },
       })
       .populate('comments.authorId', 'name avatar');
@@ -860,19 +862,31 @@ app.post('/api/posts/:id/comment', authenticateToken, async (req, res) => {
 app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
-    if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
 
-    const userId = req.user._id;
-    const isAuthor = post.author && post.author.toString() === userId.toString();
-    const isAdmin = String(req.user.role).toLowerCase() === 'admin';
+    const currentUserId = req.user._id.toString();
+
+    const postAuthorId = post.author?._id
+      ? post.author._id.toString()
+      : post.author
+      ? post.author.toString()
+      : null;
+
+    const isAuthor = postAuthorId === currentUserId;
+    const userRole = req.user.role ? String(req.user.role).toLowerCase() : '';
+    const isAdmin = userRole === 'admin' || userRole === 'board';
 
     if (!isAuthor && !isAdmin) {
-      return res.status(403).json({ error: 'Unauthorized to delete this post' });
+      return res.status(403).json({ error: 'Unauthorized: You can only delete your own posts' });
     }
 
     await Post.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Post deleted successfully' });
+
+    res.json({ message: 'Post deleted successfully', postId: req.params.id });
   } catch (error) {
+    console.error('Delete post error:', error);
     res.status(500).json({ error: 'Failed to delete post' });
   }
 });
@@ -891,9 +905,9 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/users/profile', authenticateToken, async (req, res) => {
+app.put('/api/users/profile', authenticateToken, upload.single('avatar'), async (req, res) => {
   try {
-    const { name, currentPassword, newPassword } = req.body;
+    const { name, currentPassword, newPassword, tags } = req.body;
     const userId = req.user._id;
 
     const user = await User.findById(userId);
@@ -911,21 +925,35 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
     }
 
     if (name && name.trim()) user.name = name.trim();
+    if (req.file) {
+      user.avatar = `/uploads/${req.file.filename}`;
+    }
+    if (tags) {
+      try {
+        user.tags = typeof tags === 'string' ? JSON.parse(tags) : tags;
+      } catch (e) {
+        user.tags = tags;
+      }
+    }
+
     await user.save();
+    const updatedUser = await User.findById(userId).select('-password').populate('tags');
 
     res.json({
       message: 'Profile updated successfully',
       user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        inscriptionNumber: user.inscriptionNumber,
-        dateOfBirth: user.dateOfBirth,
-        tags: user.tags || [],
+        _id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        avatar: updatedUser.avatar || null,
+        inscriptionNumber: updatedUser.inscriptionNumber,
+        dateOfBirth: updatedUser.dateOfBirth,
+        tags: updatedUser.tags || [],
       },
     });
   } catch (err) {
+    console.error('Update profile error:', err);
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
@@ -937,7 +965,7 @@ app.get('/api/users/members', authenticateToken, async (req, res) => {
   try {
     const userId = req.user._id;
     const members = await User.find({ role: { $ne: 'pending' }, _id: { $ne: userId } }).select(
-      'name email role _id inscriptionNumber'
+      'name email role _id inscriptionNumber avatar'
     );
     res.json(members);
   } catch (err) {
@@ -949,7 +977,7 @@ app.get('/api/conversations', authenticateToken, async (req, res) => {
   try {
     const userId = req.user._id;
     const conversations = await Conversation.find({ participants: userId })
-      .populate('participants', 'name role email')
+      .populate('participants', 'name role email avatar')
       .sort({ updatedAt: -1 });
     res.json(conversations);
   } catch (err) {
@@ -966,7 +994,7 @@ app.post('/api/conversations', authenticateToken, async (req, res) => {
       let existingConv = await Conversation.findOne({
         isGroup: false,
         participants: { $all: [userId, recipientId], $size: 2 },
-      }).populate('participants', 'name role email');
+      }).populate('participants', 'name role email avatar');
 
       if (existingConv) return res.json(existingConv);
 
@@ -975,7 +1003,7 @@ app.post('/api/conversations', authenticateToken, async (req, res) => {
         participants: [userId, recipientId],
       });
       await newConv.save();
-      return res.json(await newConv.populate('participants', 'name role email'));
+      return res.json(await newConv.populate('participants', 'name role email avatar'));
     }
 
     const allParticipants = Array.from(new Set([...participantIds, userId]));
@@ -985,7 +1013,7 @@ app.post('/api/conversations', authenticateToken, async (req, res) => {
       participants: allParticipants,
     });
     await newGroup.save();
-    res.json(await newGroup.populate('participants', 'name role email'));
+    res.json(await newGroup.populate('participants', 'name role email avatar'));
   } catch (err) {
     res.status(500).json({ error: 'Failed to start conversation' });
   }
@@ -993,9 +1021,9 @@ app.post('/api/conversations', authenticateToken, async (req, res) => {
 
 app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) => {
   try {
-    const messages = await ChatMessage.find({ conversationId: req.params.id }).sort({
-      createdAt: 1,
-    });
+    const messages = await ChatMessage.find({ conversationId: req.params.id })
+      .populate('senderId', 'name avatar')
+      .sort({ createdAt: 1 });
     res.json(messages);
   } catch (err) {
     res.status(500).json({ error: 'Failed to load messages' });
@@ -1128,23 +1156,30 @@ io.on('connection', (socket) => {
 
   socket.on('send_private_message', async (data) => {
     try {
-      const { conversationId, text, senderId, senderName } = data;
+      const { conversationId, text, senderId, senderName, senderAvatar } = data;
       const currentUserId = socket.user._id;
+
+      const userObj = await User.findById(senderId || currentUserId).select('avatar name');
 
       const newMessage = new ChatMessage({
         conversationId,
         senderId: senderId || currentUserId,
-        senderName: senderName || socket.user.name,
+        senderName: senderName || userObj?.name || socket.user.name,
         text,
       });
       await newMessage.save();
+
+      const populatedMessage = {
+        ...newMessage.toObject(),
+        senderAvatar: senderAvatar || userObj?.avatar || null,
+      };
 
       const conv = await Conversation.findByIdAndUpdate(conversationId, {
         lastMessage: text,
         updatedAt: Date.now(),
       }).populate('participants');
 
-      io.to(conversationId).emit('receive_private_message', newMessage);
+      io.to(conversationId).emit('receive_private_message', populatedMessage);
 
       const recipientsToNotify = conv.participants.filter(
         (p) => p._id.toString() !== (senderId || currentUserId).toString() && p.pushToken

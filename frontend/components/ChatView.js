@@ -9,9 +9,11 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 
 const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
+const SERVER_HOST = 'https://robotech-backend-bc05.onrender.com';
 
 export default function ChatView({ user, token, socket }) {
   const [conversations, setConversations] = useState([]);
@@ -26,6 +28,12 @@ export default function ChatView({ user, token, socket }) {
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
 
   const flatListRef = useRef(null);
+
+  const getMediaUri = (url) => {
+    if (!url) return null;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${SERVER_HOST}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
 
   const fetchConversations = async () => {
     try {
@@ -62,7 +70,6 @@ export default function ChatView({ user, token, socket }) {
     }
   }, []);
 
-  // Socket room handling & message listeners
   useEffect(() => {
     if (!activeConv || !socket) return;
 
@@ -86,10 +93,8 @@ export default function ChatView({ user, token, socket }) {
     const handleNewMessage = (msg) => {
       if (msg.conversationId === activeConv._id) {
         setMessages((prev) => {
-          // Check if message already exists by real backend ID
           if (prev.some((m) => m._id === msg._id)) return prev;
 
-          // Replace temporary optimistic message if matching text & sender
           const tempIndex = prev.findIndex(
             (m) => m.isTemp && m.senderId === msg.senderId && m.text === msg.text
           );
@@ -127,11 +132,11 @@ export default function ChatView({ user, token, socket }) {
       text: textToSend,
       senderId: user._id,
       senderName: user.name,
+      senderAvatar: user.avatar,
       senderTags: user.tags || [],
       createdAt: new Date().toISOString(),
     };
 
-    // Add temporary message for instant UI responsiveness
     setMessages((prev) => [...prev, tempMessage]);
     setInputText('');
 
@@ -140,6 +145,7 @@ export default function ChatView({ user, token, socket }) {
       text: textToSend,
       senderId: user._id,
       senderName: user.name,
+      senderAvatar: user.avatar,
       senderTags: user.tags || [],
     });
   };
@@ -173,10 +179,9 @@ export default function ChatView({ user, token, socket }) {
   };
 
   const getOtherUser = (conv) => {
-    return conv.participants?.find((p) => p._id?.toString() !== user._id?.toString());
+    return conv.participants?.find((p) => (p._id || p)?.toString() !== user._id?.toString());
   };
 
-  // Helper component/function to render tag badges nicely
   const renderTagBadges = (tags) => {
     if (!tags || tags.length === 0) return null;
     return (
@@ -230,9 +235,22 @@ export default function ChatView({ user, token, socket }) {
           >
             <Text className="text-amber-400 font-bold text-xs">← Inbox</Text>
           </TouchableOpacity>
+
+          {!activeConv.isGroup && (
+            <View className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 overflow-hidden mr-2 justify-center items-center">
+              {otherUser?.avatar ? (
+                <Image source={{ uri: getMediaUri(otherUser.avatar) }} className="w-full h-full" resizeMode="cover" />
+              ) : (
+                <Text className="text-amber-500 font-bold text-xs">
+                  {(otherUser?.name || 'M').charAt(0).toUpperCase()}
+                </Text>
+              )}
+            </View>
+          )}
+
           <View className="flex-1">
             <Text className="text-white font-bold text-base" numberOfLines={1}>
-              {activeConv.isGroup ? `👥 ${activeConv.groupName}` : `👤 ${otherUser?.name || 'Member'}`}
+              {activeConv.isGroup ? `👥 ${activeConv.groupName}` : otherUser?.name || 'Member'}
             </Text>
             {!activeConv.isGroup && renderTagBadges(headerTags)}
           </View>
@@ -245,33 +263,50 @@ export default function ChatView({ user, token, socket }) {
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
           renderItem={({ item }) => {
-            const isMe = item.senderId?.toString() === user._id?.toString();
+            const senderObj = typeof item.senderId === 'object' ? item.senderId : null;
+            const senderIdStr = senderObj?._id?.toString() || item.senderId?.toString();
+            const isMe = senderIdStr === user._id?.toString();
             const senderTags = item.senderTags || item.sender?.tags || [];
+            const avatarUrl = item.senderAvatar || senderObj?.avatar;
 
             return (
-              <View className={`mb-3 flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+              <View className={`mb-3 flex-row items-end gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}>
                 {!isMe && (
-                  <View className="mb-1 px-1">
-                    <Text className="text-slate-500 text-[10px] font-medium">
-                      {item.senderName}
-                    </Text>
-                    {renderTagBadges(senderTags)}
+                  <View className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-500/40 overflow-hidden justify-center items-center">
+                    {avatarUrl ? (
+                      <Image source={{ uri: getMediaUri(avatarUrl) }} className="w-full h-full" resizeMode="cover" />
+                    ) : (
+                      <Text className="text-amber-500 font-bold text-[10px]">
+                        {(item.senderName || 'M').charAt(0).toUpperCase()}
+                      </Text>
+                    )}
                   </View>
                 )}
-                <View
-                  className={`max-w-[80%] px-4 py-3 rounded-2xl ${
-                    isMe
-                      ? 'bg-amber-500 rounded-br-none shadow-md shadow-amber-500/10'
-                      : 'bg-[#0b0f19] border border-slate-800/80 rounded-bl-none shadow-md'
-                  }`}
-                >
-                  <Text
-                    className={`text-sm ${
-                      isMe ? 'text-slate-950 font-semibold' : 'text-slate-200 font-normal'
+
+                <View className={`flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                  {!isMe && (
+                    <View className="mb-1 px-1">
+                      <Text className="text-slate-500 text-[10px] font-medium">
+                        {item.senderName}
+                      </Text>
+                      {renderTagBadges(senderTags)}
+                    </View>
+                  )}
+                  <View
+                    className={`max-w-[80%] px-4 py-3 rounded-2xl ${
+                      isMe
+                        ? 'bg-amber-500 rounded-br-none shadow-md shadow-amber-500/10'
+                        : 'bg-[#0b0f19] border border-slate-800/80 rounded-bl-none shadow-md'
                     }`}
                   >
-                    {item.text}
-                  </Text>
+                    <Text
+                      className={`text-sm ${
+                        isMe ? 'text-slate-950 font-semibold' : 'text-slate-200 font-normal'
+                      }`}
+                    >
+                      {item.text}
+                    </Text>
+                  </View>
                 </View>
               </View>
             );
@@ -333,12 +368,25 @@ export default function ChatView({ user, token, socket }) {
               onPress={() => setActiveConv(item)}
               className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-2xl mb-2.5 flex-row justify-between items-center shadow-md active:bg-slate-900"
             >
-              <View className="flex-1 mr-2">
-                <Text className="text-white font-bold text-base">{getChatTitle(item)}</Text>
-                {!item.isGroup && renderTagBadges(convTags)}
-                <Text className="text-slate-400 text-xs mt-1 font-normal" numberOfLines={1}>
-                  {item.lastMessage || 'No messages yet'}
-                </Text>
+              <View className="flex-row items-center flex-1 mr-2">
+                {!item.isGroup && (
+                  <View className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-500/40 overflow-hidden mr-3 justify-center items-center">
+                    {otherUser?.avatar ? (
+                      <Image source={{ uri: getMediaUri(otherUser.avatar) }} className="w-full h-full" resizeMode="cover" />
+                    ) : (
+                      <Text className="text-amber-500 font-bold text-sm">
+                        {(otherUser?.name || 'M').charAt(0).toUpperCase()}
+                      </Text>
+                    )}
+                  </View>
+                )}
+                <View className="flex-1">
+                  <Text className="text-white font-bold text-base">{getChatTitle(item)}</Text>
+                  {!item.isGroup && renderTagBadges(convTags)}
+                  <Text className="text-slate-400 text-xs mt-1 font-normal" numberOfLines={1}>
+                    {item.lastMessage || 'No messages yet'}
+                  </Text>
+                </View>
               </View>
               <Text className="text-slate-600 text-xl font-bold">›</Text>
             </TouchableOpacity>
@@ -423,10 +471,21 @@ export default function ChatView({ user, token, socket }) {
                     isSelected ? 'bg-amber-500/20 border-amber-500/80' : 'bg-[#0b0f19] border-slate-800/80'
                   }`}
                 >
-                  <View className="flex-1 mr-2">
-                    <Text className="text-white font-bold text-sm">{item.name}</Text>
-                    <Text className="text-slate-400 text-xs">{item.email}</Text>
-                    {renderTagBadges(item.tags)}
+                  <View className="flex-row items-center flex-1 mr-2">
+                    <View className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/40 overflow-hidden mr-2.5 justify-center items-center">
+                      {item.avatar ? (
+                        <Image source={{ uri: getMediaUri(item.avatar) }} className="w-full h-full" resizeMode="cover" />
+                      ) : (
+                        <Text className="text-amber-500 font-bold text-xs">
+                          {(item.name || 'M').charAt(0).toUpperCase()}
+                        </Text>
+                      )}
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-white font-bold text-sm">{item.name}</Text>
+                      <Text className="text-slate-400 text-xs">{item.email}</Text>
+                      {renderTagBadges(item.tags)}
+                    </View>
                   </View>
                   {!isCreatingGroup && <Text className="text-amber-400 font-bold text-xs">Message →</Text>}
                   {isCreatingGroup && <Text className="text-base">{isSelected ? '✅' : '⚪'}</Text>}

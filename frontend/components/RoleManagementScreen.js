@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,17 @@ import {
   StyleSheet,
   Modal,
   ScrollView,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // States for Search & Filter Options
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTagFilter, setSelectedTagFilter] = useState(null); // Tag ID or null for 'All'
   
   // States for Tag Management Modal
   const [allTags, setAllTags] = useState([]);
@@ -83,9 +88,29 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
     }
   };
 
+  // Filtered Users computation using search query and tag selection
+  const filteredUsers = useMemo(() => {
+    return users.filter((user) => {
+      // Name Search match
+      const matchesName = user.name
+        ? user.name.toLowerCase().includes(searchQuery.toLowerCase())
+        : false;
+
+      // Tag Filter match
+      let matchesTag = true;
+      if (selectedTagFilter) {
+        matchesTag = user.tags?.some((tag) => {
+          const tagId = typeof tag === 'object' ? tag._id : tag;
+          return tagId === selectedTagFilter;
+        });
+      }
+
+      return matchesName && matchesTag;
+    });
+  }, [users, searchQuery, selectedTagFilter]);
+
   const openTagModal = (user) => {
     setSelectedUserForTags(user);
-    // Extract existing tag IDs from user object (handles populated objects or raw IDs)
     const existingIds = (user.tags || []).map((t) => (typeof t === 'object' ? t._id : t));
     setUserSelectedTagIds(existingIds);
     setTagModalVisible(true);
@@ -113,7 +138,6 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
       const data = await response.json();
 
       if (response.ok) {
-        // Update local state
         setUsers((prevUsers) =>
           prevUsers.map((u) => (u._id === selectedUserForTags._id ? data.user : u))
         );
@@ -229,7 +253,6 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
         </View>
 
         <View style={styles.actionsContainer}>
-          {/* Tag Management Button */}
           <TouchableOpacity style={styles.tagButton} onPress={() => openTagModal(item)}>
             <Text style={styles.tagButtonText}>🏷️ Tags</Text>
           </TouchableOpacity>
@@ -264,13 +287,62 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.headerTitle}>Role & Tag Management</Text>
+
+      {/* Name Search Input */}
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by name..."
+          placeholderTextColor="#64748b"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+      </View>
+
+      {/* Horizontal Tag Filters */}
+      {allTags.length > 0 && (
+        <View style={styles.filterWrapper}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterContainer}>
+            <TouchableOpacity
+              style={[styles.filterChip, selectedTagFilter === null && styles.filterChipActive]}
+              onPress={() => setSelectedTagFilter(null)}
+            >
+              <Text style={[styles.filterChipText, selectedTagFilter === null && styles.filterChipTextActive]}>
+                All Tags
+              </Text>
+            </TouchableOpacity>
+
+            {allTags.map((tag) => {
+              const isActive = selectedTagFilter === tag._id;
+              return (
+                <TouchableOpacity
+                  key={tag._id}
+                  style={[styles.filterChip, isActive && styles.filterChipActive]}
+                  onPress={() => setSelectedTagFilter(isActive ? null : tag._id)}
+                >
+                  <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                    {tag.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* User List */}
       <FlatList
-        data={users}
+        data={filteredUsers}
         keyExtractor={(item) => item._id}
         renderItem={renderUserItem}
         contentContainerStyle={styles.listContainer}
         onRefresh={fetchUsers}
         refreshing={loading}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>No users match the search criteria.</Text>
+          </View>
+        }
       />
 
       {/* Tag Assignment Modal */}
@@ -326,8 +398,41 @@ export default function RoleManagementScreen({ token, currentUserId, apiUrl }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0f1d' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0f1d' },
-  headerTitle: { fontSize: 22, fontWeight: '700', marginHorizontal: 20, marginVertical: 15, color: '#f59e0b' },
-  listContainer: { paddingHorizontal: 16 },
+  headerTitle: { fontSize: 22, fontWeight: '700', marginHorizontal: 20, marginTop: 15, marginBottom: 10, color: '#f59e0b' },
+  
+  // Search Bar Styles
+  searchContainer: { paddingHorizontal: 16, marginBottom: 10 },
+  searchInput: {
+    backgroundColor: '#030712',
+    color: '#f8fafc',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+
+  // Filter Styles
+  filterWrapper: { marginBottom: 12 },
+  filterContainer: { paddingHorizontal: 16, gap: 8 },
+  filterChip: {
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  filterChipActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderColor: '#f59e0b',
+  },
+  filterChipText: { fontSize: 12, color: '#94a3b8', fontWeight: '500' },
+  filterChipTextActive: { color: '#f59e0b', fontWeight: '700' },
+
+  // List & Cards
+  listContainer: { paddingHorizontal: 16, paddingBottom: 20 },
   card: {
     backgroundColor: '#030712',
     padding: 14,
@@ -347,6 +452,8 @@ const styles = StyleSheet.create({
   tagChip: { backgroundColor: 'rgba(59, 130, 246, 0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   tagChipText: { fontSize: 10, color: '#60a5fa' },
   noTagsText: { fontSize: 11, color: '#64748b', fontStyle: 'italic' },
+  
+  // Actions
   actionsContainer: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   tagButton: { backgroundColor: 'rgba(59, 130, 246, 0.15)', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 },
   tagButtonText: { fontSize: 11, color: '#60a5fa', fontWeight: '600' },
@@ -365,6 +472,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   deleteButtonText: { fontSize: 12 },
+
+  // Empty State
+  emptyContainer: { alignItems: 'center', marginTop: 40 },
+  emptyText: { color: '#64748b', fontSize: 14, fontStyle: 'italic' },
+
+  // Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 20 },
   modalContent: { backgroundColor: '#030712', borderRadius: 16, padding: 20, maxHeight: '80%', borderWidth: 1, borderColor: '#f59e0b' },
   modalTitle: { fontSize: 18, fontWeight: '700', color: '#f8fafc', marginBottom: 15 },

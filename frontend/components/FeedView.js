@@ -34,7 +34,21 @@ export default function FeedView({ token, currentUser }) {
   const [activeCommentPostId, setActiveCommentPostId] = useState(null);
   const [commentText, setCommentText] = useState('');
 
-  // Fetch all posts
+  const currentUserId = (
+    currentUser?._id ||
+    currentUser?.id ||
+    currentUser?.user?._id ||
+    currentUser?.user?.id
+  )?.toString();
+
+  const currentUserRole = currentUser?.role
+    ? String(currentUser.role).toLowerCase()
+    : currentUser?.user?.role
+    ? String(currentUser.user.role).toLowerCase()
+    : '';
+
+  const isAdminOrBoard = currentUserRole === 'admin' || currentUserRole === 'board';
+
   const fetchPosts = async () => {
     if (!token) {
       setLoading(false);
@@ -72,7 +86,6 @@ export default function FeedView({ token, currentUser }) {
     fetchPosts();
   };
 
-  // Image Picker
   const pickImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissionResult.granted) {
@@ -91,7 +104,6 @@ export default function FeedView({ token, currentUser }) {
     }
   };
 
-  // Create Post
   const handleCreatePost = async () => {
     if (!postContent.trim() && !selectedImage) {
       Alert.alert('Validation Error', 'Please enter text or select an image');
@@ -102,7 +114,7 @@ export default function FeedView({ token, currentUser }) {
     try {
       const formData = new FormData();
       formData.append('content', postContent);
-      formData.append('authorName', currentUser?.name || 'Member'); // Fallback for schema required rule
+      formData.append('authorName', currentUser?.name || currentUser?.user?.name || 'Member');
 
       if (selectedImage) {
         const filename = selectedImage.split('/').pop() || 'photo.jpg';
@@ -140,11 +152,10 @@ export default function FeedView({ token, currentUser }) {
     }
   };
 
-  // Delete Post
   const handleDeletePost = (postId) => {
     Alert.alert(
       'Delete Post',
-      'Are you sure you want to delete this post?',
+      'Are you sure you want to delete this post? This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -175,7 +186,6 @@ export default function FeedView({ token, currentUser }) {
     );
   };
 
-  // Like / Unlike Post
   const handleLikePost = async (postId) => {
     try {
       const response = await fetch(`${API_BASE_URL}/posts/${postId}/like`, {
@@ -195,7 +205,6 @@ export default function FeedView({ token, currentUser }) {
     }
   };
 
-  // Add Comment
   const handleAddComment = async (postId) => {
     if (!commentText.trim()) return;
 
@@ -208,7 +217,7 @@ export default function FeedView({ token, currentUser }) {
         },
         body: JSON.stringify({
           text: commentText.trim(),
-          authorName: currentUser?.name || 'Member',
+          authorName: currentUser?.name || currentUser?.user?.name || 'Member',
         }),
       });
 
@@ -227,7 +236,6 @@ export default function FeedView({ token, currentUser }) {
     }
   };
 
-  // Render Tags
   const renderTagBadges = (tags) => {
     if (!tags || tags.length === 0) return null;
     return (
@@ -254,7 +262,6 @@ export default function FeedView({ token, currentUser }) {
     );
   };
 
-  // Resolve Media URL
   const getMediaUri = (url) => {
     if (!url) return null;
     if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -263,28 +270,34 @@ export default function FeedView({ token, currentUser }) {
     return `${SERVER_HOST}${url.startsWith('/') ? '' : '/'}${url}`;
   };
 
-  // Render Item
   const renderPostItem = ({ item }) => {
-    const isLiked = item.likes?.includes(currentUser?._id);
+    const isLiked = item.likes?.some(
+      (likeId) => (typeof likeId === 'object' ? likeId._id : likeId)?.toString() === currentUserId
+    );
 
-    // Schema matching author name resolution
     const authorName =
       (typeof item.author === 'object' && item.author?.name) ||
       item.authorName ||
       'Anonymous User';
 
-    const authorId = typeof item.author === 'object' ? item.author?._id : item.author;
-    const isMyPost = currentUser?._id && authorId === currentUser?._id;
+    const authorAvatar = typeof item.author === 'object' ? item.author?.avatar : null;
+
+    const authorId = (typeof item.author === 'object' ? item.author?._id || item.author?.id : item.author)?.toString();
+    const canDelete = currentUserId && (authorId === currentUserId || isAdminOrBoard);
     const authorTags = typeof item.author === 'object' ? item.author?.tags || [] : [];
 
     return (
       <View className="bg-[#030712] border border-slate-800 rounded-2xl p-4 mb-4">
         {/* Header */}
         <View className="flex-row items-center mb-3">
-          <View className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-500/40 justify-center items-center mr-3">
-            <Text className="text-amber-500 font-bold text-sm">
-              {authorName.charAt(0).toUpperCase()}
-            </Text>
+          <View className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-500/40 justify-center items-center mr-3 overflow-hidden">
+            {authorAvatar ? (
+              <Image source={{ uri: getMediaUri(authorAvatar) }} className="w-full h-full" resizeMode="cover" />
+            ) : (
+              <Text className="text-amber-500 font-bold text-sm">
+                {authorName.charAt(0).toUpperCase()}
+              </Text>
+            )}
           </View>
           <View className="flex-1">
             <Text className="text-white font-bold text-sm">{authorName}</Text>
@@ -294,9 +307,9 @@ export default function FeedView({ token, currentUser }) {
             <Text className="text-slate-500 text-[10px]">
               {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : ''}
             </Text>
-            {isMyPost && (
+            {canDelete && (
               <TouchableOpacity onPress={() => handleDeletePost(item._id)} className="p-1">
-                <Trash2 size={15} color="#f43f5e" />
+                <Trash2 size={16} color="#f43f5e" />
               </TouchableOpacity>
             )}
           </View>
@@ -350,11 +363,22 @@ export default function FeedView({ token, currentUser }) {
           <View className="mt-3 pt-3 border-t border-slate-800">
             {item.comments && item.comments.length > 0 ? (
               item.comments.map((comment, index) => (
-                <View key={comment._id || index} className="bg-slate-900/60 p-2.5 rounded-lg mb-2">
-                  <Text className="text-amber-500 font-bold text-xs">
-                    {comment.authorName || comment.user?.name || 'Member'}
-                  </Text>
-                  <Text className="text-slate-300 text-xs mt-0.5">{comment.text}</Text>
+                <View key={comment._id || index} className="bg-slate-900/60 p-2.5 rounded-lg mb-2 flex-row items-start gap-2">
+                  <View className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-500/40 justify-center items-center overflow-hidden">
+                    {comment.authorId?.avatar ? (
+                      <Image source={{ uri: getMediaUri(comment.authorId.avatar) }} className="w-full h-full" />
+                    ) : (
+                      <Text className="text-amber-500 font-bold text-[10px]">
+                        {(comment.authorName || 'M').charAt(0).toUpperCase()}
+                      </Text>
+                    )}
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-amber-500 font-bold text-xs">
+                      {comment.authorName || comment.authorId?.name || comment.user?.name || 'Member'}
+                    </Text>
+                    <Text className="text-slate-300 text-xs mt-0.5">{comment.text}</Text>
+                  </View>
                 </View>
               ))
             ) : (

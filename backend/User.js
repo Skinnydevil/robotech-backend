@@ -8,6 +8,7 @@ const UserSchema = new mongoose.Schema(
       required: true, 
       trim: true 
     },
+    avatar: { type: String, default: null },
     // Add this field to your userSchema definition inside User.js
     tags: [{ 
         type: mongoose.Schema.Types.ObjectId, 

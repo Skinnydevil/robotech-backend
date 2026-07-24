@@ -24,6 +24,7 @@ import io from 'socket.io-client';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Notifications from 'expo-notifications';
+import * as ImagePicker from 'expo-image-picker';
 import {
   Menu,
   Settings,
@@ -37,7 +38,7 @@ import {
   X,
   Lock,
   Tag,
-  Plus,
+  Camera,
 } from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
@@ -84,6 +85,7 @@ function MainAppContent() {
 
   // Profile Settings State
   const [updateName, setUpdateName] = useState('');
+  const [avatarUri, setAvatarUri] = useState(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [settingsMsg, setSettingsMsg] = useState({ type: '', text: '' });
@@ -92,8 +94,6 @@ function MainAppContent() {
   const [availableTags, setAvailableTags] = useState([]);
   const [selectedTags, setSelectedTags] = useState([]);
   const [isPublicTagAllowed, setIsPublicTagAllowed] = useState(false);
-  const [newCustomTagName, setNewCustomTagName] = useState('');
-  const [newCustomTagColor, setNewCustomTagColor] = useState('#f59e0b');
 
   // Assembly Check-In Scanner State
   const [scannerVisible, setScannerVisible] = useState(false);
@@ -108,23 +108,6 @@ function MainAppContent() {
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
-
-  const triggerTestNotification = async () => {
-    try {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '🤖 ROBOTECH Test Alert',
-          body: 'Local notifications are configured and working correctly!',
-          sound: 'default',
-          data: { test: 'data' },
-        },
-        trigger: null,
-      });
-    } catch (error) {
-      console.error('Error triggering notification:', error);
-      Alert.alert('Error', 'Could not fire notification. Check console logs.');
-    }
-  };
 
   useEffect(() => {
     const registerForPushNotifications = async () => {
@@ -227,7 +210,7 @@ function MainAppContent() {
         if (activeTabRef.current === 'chat') return;
 
         const senderName = msg?.sender?.name || (typeof msg?.sender === 'string' ? 'Club Member' : 'New Message');
-        const messageBody = msg?.content || msg?.text || msg?.message || (msg?.mediaUrl ? '📷 Sent an attachment' : 'Sent you a message.');
+        const messageBody = msg?.content || msg?.text || msg?.message || (msg?.mediaUrl ? 'Sent an attachment' : 'Sent you a message.');
 
         await Notifications.scheduleNotificationAsync({
           content: {
@@ -268,6 +251,25 @@ function MainAppContent() {
   const handleDateChange = (event, selectedDate) => {
     setShowDatePicker(Platform.OS === 'ios');
     if (selectedDate) setDateOfBirth(selectedDate);
+  };
+
+  const pickAvatarImage = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permissionResult.granted) {
+      Alert.alert('Permission Required', 'Permission to access media library is required.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setAvatarUri(result.assets[0].uri);
+    }
   };
 
   const handleAuth = async () => {
@@ -328,58 +330,32 @@ function MainAppContent() {
     }
   };
 
-  const handleToggleMemberTag = (tagName) => {
-    let updated;
-    if (selectedTags.includes(tagName)) {
-      updated = selectedTags.filter((t) => t !== tagName);
-    } else {
-      updated = [...selectedTags, tagName];
-    }
-    setSelectedTags(updated);
-  };
-
-  const handleCreateCustomTag = async () => {
-    const trimmed = newCustomTagName.trim();
-    if (!trimmed) return;
-    try {
-      const res = await fetch(`${API_URL}/tags`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ name: trimmed, color: newCustomTagColor }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        const createdTag = data.tag || data;
-        setAvailableTags((prev) => [...prev, createdTag]);
-        setSelectedTags((prev) => [...prev, createdTag.name]);
-        setNewCustomTagName('');
-      } else {
-        Alert.alert('Error', data.error || 'Could not create tag.');
-      }
-    } catch (err) {
-      Alert.alert('Error', 'Network error creating tag.');
-    }
-  };
-
   const handleUpdateProfile = async () => {
     Keyboard.dismiss();
     setSettingsMsg({ type: '', text: '' });
     try {
+      const formData = new FormData();
+      formData.append('name', updateName);
+      if (currentPassword) formData.append('currentPassword', currentPassword);
+      if (newPassword) formData.append('newPassword', newPassword);
+
+      if (avatarUri) {
+        const filename = avatarUri.split('/').pop() || 'avatar.jpg';
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `image/${match[1]}` : 'image/jpeg';
+        formData.append('avatar', {
+          uri: avatarUri,
+          name: filename,
+          type,
+        });
+      }
+
       const res = await fetch(`${API_URL}/users/profile`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          name: updateName,
-          currentPassword,
-          newPassword: newPassword || undefined,
-          tags: selectedTags,
-        }),
+        body: formData,
       });
 
       const data = await res.json();
@@ -388,11 +364,11 @@ function MainAppContent() {
         return;
       }
 
-      const updatedUser = { ...user, name: updateName, tags: selectedTags };
-      setUser(updatedUser);
-      await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
+      setUser(data.user);
+      await AsyncStorage.setItem('userData', JSON.stringify(data.user));
       setCurrentPassword('');
       setNewPassword('');
+      setAvatarUri(null);
       setSettingsMsg({ type: 'success', text: 'Profile updated successfully!' });
     } catch (err) {
       setSettingsMsg({ type: 'error', text: 'Failed to update profile.' });
@@ -440,7 +416,7 @@ function MainAppContent() {
       const data = await res.json();
       if (res.ok) {
         setScannerVisible(false);
-        Alert.alert('Check-In Confirmed! 🎯', data.message || 'You are marked present for this assembly.');
+        Alert.alert('Check-In Confirmed!', data.message || 'You are marked present for this assembly.');
       } else {
         Alert.alert('Check-In Failed', data.error || 'Could not register attendance.', [
           { text: 'Try Again', onPress: () => { isScanningRef.current = false; } },
@@ -477,6 +453,12 @@ function MainAppContent() {
       setActiveTab('feed');
       setSideMenuOpen(false);
     }
+  };
+
+  const getMediaUri = (url) => {
+    if (!url) return null;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${SOCKET_URL}${url.startsWith('/') ? '' : '/'}${url}`;
   };
 
   if (loading) {
@@ -609,7 +591,11 @@ function MainAppContent() {
               </TouchableOpacity>
 
               <View className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 justify-center items-center overflow-hidden">
-                <Image source={ClubLogo} className="w-6 h-6" resizeMode="contain" />
+                {user?.avatar ? (
+                  <Image source={{ uri: getMediaUri(user.avatar) }} className="w-full h-full" resizeMode="cover" />
+                ) : (
+                  <Image source={ClubLogo} className="w-6 h-6" resizeMode="contain" />
+                )}
               </View>
               <View>
                 <Text className="text-amber-500 font-black text-base tracking-wider">ROBOTECH</Text>
@@ -631,7 +617,7 @@ function MainAppContent() {
 
           {/* Tab Views */}
           <Animated.View className="flex-1" style={{ opacity: fadeAnim }}>
-            {activeTab === 'feed' && <FeedView user={user} token={token} />}
+            {activeTab === 'feed' && <FeedView currentUser={user} token={token} />}
             {activeTab === 'chat' && <ChatView user={user} token={token} socket={socketRef.current} />}
             {activeTab === 'calendar' && <CalendarView user={user} token={token} />}
             {activeTab === 'roles' && isAdmin && <RoleManagementScreen token={token} currentUserId={user?._id} />}
@@ -641,7 +627,33 @@ function MainAppContent() {
             {activeTab === 'settings' && (
               <ScrollView className="flex-1 p-5" keyboardShouldPersistTaps="handled">
                 <Text className="text-amber-500 font-black text-xl mb-1 tracking-wider">ACCOUNT SETTINGS</Text>
-                <Text className="text-slate-400 text-xs mb-6">Manage profile details and event check-ins</Text>
+                <Text className="text-slate-400 text-xs mb-6">Manage profile details and photo</Text>
+
+                {/* Profile Photo Selector */}
+                <View className="bg-slate-900 border border-slate-800 p-5 rounded-2xl mb-5 items-center">
+                  <View className="relative mb-3">
+                    <View className="w-24 h-24 rounded-full bg-amber-500/20 border-2 border-amber-500 overflow-hidden justify-center items-center">
+                      {avatarUri || user?.avatar ? (
+                        <Image
+                          source={{ uri: avatarUri || getMediaUri(user?.avatar) }}
+                          className="w-full h-full"
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <Text className="text-amber-500 font-black text-3xl">
+                          {user?.name?.charAt(0)?.toUpperCase() || 'U'}
+                        </Text>
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      onPress={pickAvatarImage}
+                      className="absolute bottom-0 right-0 bg-amber-500 p-2 rounded-full border border-slate-950"
+                    >
+                      <Camera size={16} color="#030712" />
+                    </TouchableOpacity>
+                  </View>
+                  <Text className="text-slate-300 text-xs font-bold">Tap icon to choose new profile photo</Text>
+                </View>
 
                 <View className="bg-slate-900 border border-amber-500/30 p-5 rounded-2xl mb-5 flex-row justify-between items-center shadow-lg shadow-amber-500/5">
                   <View className="flex-1 mr-3">
@@ -654,10 +666,6 @@ function MainAppContent() {
                     <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">Scan</Text>
                   </TouchableOpacity>
                 </View>
-
-                <TouchableOpacity onPress={triggerTestNotification} activeOpacity={0.8} className="bg-amber-500/20 border border-amber-500/50 p-4 rounded-xl items-center my-4">
-                  <Text className="text-amber-500 font-bold text-xs uppercase tracking-wider">🔔 Trigger Test Notification</Text>
-                </TouchableOpacity>
 
                 {settingsMsg.text ? (
                   <View className={`p-3.5 rounded-2xl mb-4 border flex-row items-center gap-2 ${settingsMsg.type === 'error' ? 'bg-rose-500/10 border-rose-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}`}>
@@ -683,57 +691,6 @@ function MainAppContent() {
                       <Text className="text-slate-400 text-xs mb-1.5 font-medium">Inscription Number</Text>
                       <TextInput value={user?.inscriptionNumber} editable={false} className="bg-slate-950/50 text-slate-500 px-4 py-3.5 rounded-xl border border-slate-900 text-sm mb-2" />
                     </>
-                  )}
-                </View>
-
-                {/* Member Tag Selection / Custom Creation Box */}
-                <View className="bg-slate-900 p-5 rounded-2xl border border-slate-800 mb-5">
-                  <View className="flex-row items-center gap-2 mb-3">
-                    <Tag size={16} color="#f59e0b" />
-                    <Text className="text-slate-200 font-bold text-xs uppercase tracking-wider">My Tags & Specializations</Text>
-                  </View>
-                  <Text className="text-slate-400 text-xs mb-3">Select available tags or add custom tags below.</Text>
-
-                  <View className="flex-row flex-wrap gap-2 mb-4">
-                    {availableTags.map((t) => {
-                      const isSelected = selectedTags.includes(t.name);
-                      return (
-                        <TouchableOpacity
-                          key={t._id || t.name}
-                          onPress={() => handleToggleMemberTag(t.name)}
-                          style={{
-                            backgroundColor: isSelected ? `${t.color || '#f59e0b'}30` : '#0f172a',
-                            borderColor: isSelected ? (t.color || '#f59e0b') : '#334155',
-                          }}
-                          className="border px-3 py-2 rounded-xl flex-row items-center gap-1.5"
-                        >
-                          <Tag size={12} color={t.color || '#f59e0b'} />
-                          <Text className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-400'}`}>
-                            {t.name}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-
-                  {isPublicTagAllowed && (
-                    <View className="border-t border-slate-800 pt-3 mt-2">
-                      <Text className="text-slate-300 font-bold text-xs mb-2">Create Custom Tag</Text>
-                      <TextInput
-                        placeholder="Custom tag name..."
-                        placeholderTextColor="#475569"
-                        value={newCustomTagName}
-                        onChangeText={setNewCustomTagName}
-                        className="bg-slate-950 text-white px-3 py-2.5 rounded-xl border border-slate-800 text-xs mb-2 font-medium"
-                      />
-                      <TouchableOpacity
-                        onPress={handleCreateCustomTag}
-                        className="bg-amber-500/20 border border-amber-500/50 py-2.5 rounded-xl items-center flex-row justify-center gap-1"
-                      >
-                        <Plus size={14} color="#f59e0b" />
-                        <Text className="text-amber-500 font-bold text-xs uppercase">Add Custom Tag</Text>
-                      </TouchableOpacity>
-                    </View>
                   )}
                 </View>
 
@@ -798,7 +755,7 @@ function MainAppContent() {
           <Modal visible={scannerVisible} animationType="slide" transparent={false} onRequestClose={closeScannerModal}>
             <SafeAreaView className="flex-1 bg-slate-950 justify-between">
               <View className="flex-row justify-between items-center p-5 border-b border-slate-800">
-                <Text className="text-white font-black text-base tracking-wide">📷 Scan Assembly Code</Text>
+                <Text className="text-white font-black text-base tracking-wide">Scan Assembly Code</Text>
                 <TouchableOpacity onPress={closeScannerModal} className="bg-slate-900 border border-slate-800 p-2 rounded-xl">
                   <X size={20} color="#94a3b8" />
                 </TouchableOpacity>
