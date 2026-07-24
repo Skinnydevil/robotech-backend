@@ -106,6 +106,15 @@ const UserSchema = new mongoose.Schema(
 
 const User = mongoose.model('User', UserSchema);
 
+// Tag Settings Schema for Public Policy Control
+const TagSettingsSchema = new mongoose.Schema(
+  {
+    allowPublicCreation: { type: Boolean, default: false },
+  },
+  { timestamps: true }
+);
+const TagSettings = mongoose.model('TagSettings', TagSettingsSchema);
+
 // General Assembly Session Schema
 const assemblySessionSchema = new mongoose.Schema(
   {
@@ -261,20 +270,10 @@ app.post('/api/auth/login', async (req, res) => {
 // TAG SYSTEM API ROUTES
 // ==========================================
 
-// Get all tags
-app.get('/api/tags', authenticateToken, async (req, res) => {
-  try {
-    const tags = await Tag.find().sort({ name: 1 });
-    res.json(tags);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch tags', details: error.message });
-  }
-});
-
 // Create a new tag (Admin / Board only)
 app.post('/api/tags', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { name, color, description } = req.body;
+    const { name, color, isPublic } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: 'Tag name is required' });
@@ -285,7 +284,11 @@ app.post('/api/tags', authenticateToken, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Tag with this name already exists' });
     }
 
-    const newTag = new Tag({ name: name.trim(), color, description });
+    const newTag = new Tag({ 
+      name: name.trim(), 
+      color: color || '#3b82f6', 
+      isPublic: isPublic ?? false 
+    });
     await newTag.save();
 
     res.status(201).json(newTag);
@@ -294,13 +297,28 @@ app.post('/api/tags', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// Get all tags (Members get only public tags, admins/board get all tags)
+app.get('/api/tags', authenticateToken, async (req, res) => {
+  try {
+    let query = {};
+    const userRole = req.user.role ? String(req.user.role).toLowerCase() : '';
+    if (userRole !== 'admin' && userRole !== 'board') {
+      query = { isPublic: true };
+    }
+    const tags = await Tag.find(query).sort({ name: 1 });
+    res.json(tags);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch tags', details: error.message });
+  }
+});
+
 // Update a tag (Admin / Board only)
 app.put('/api/tags/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { name, color, description } = req.body;
+    const { name, color, description, isPublic } = req.body;
     const updatedTag = await Tag.findByIdAndUpdate(
       req.params.id,
-      { name, color, description },
+      { name, color, description, isPublic },
       { new: true, runValidators: true }
     );
 
@@ -333,16 +351,14 @@ app.delete('/api/tags/:id', authenticateToken, requireAdmin, async (req, res) =>
 });
 
 // Assign tags to a user (Admin / Board only)
-// 1. ASSIGN / ADD TAGS TO A USER (Admin/Board only)
 app.post('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { tagIds } = req.body; // Array of Tag ObjectIds e.g. ["66a1...", "66a2..."]
+    const { tagIds } = req.body;
 
     if (!Array.isArray(tagIds)) {
       return res.status(400).json({ error: 'tagIds must be an array of tag IDs.' });
     }
 
-    // $addToSet adds tags without creating duplicates
     const user = await User.findByIdAndUpdate(
       req.params.userId,
       { $addToSet: { tags: { $each: tagIds } } },
@@ -359,10 +375,10 @@ app.post('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req,
   }
 });
 
-// 2. OVERWRITE / SET ALL TAGS FOR A USER (Admin/Board only)
+// OVERWRITE / SET ALL TAGS FOR A USER (Admin/Board only)
 app.put('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { tagIds } = req.body; // Complete list of selected tag IDs
+    const { tagIds } = req.body;
 
     if (!Array.isArray(tagIds)) {
       return res.status(400).json({ error: 'tagIds must be an array.' });
@@ -379,6 +395,36 @@ app.put('/api/users/:userId/tags', authenticateToken, requireAdmin, async (req, 
     }
 
     res.json({ message: 'User tags updated successfully', user });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update tags', details: error.message });
+  }
+});
+
+// Update profile tags for regular users
+app.put('/api/users/profile/tags', authenticateToken, async (req, res) => {
+  try {
+    const { tagIds } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    if (!Array.isArray(tagIds)) {
+      return res.status(400).json({ error: 'tagIds must be an array.' });
+    }
+
+    const userRole = req.user.role ? String(req.user.role).toLowerCase() : '';
+    if (userRole !== 'admin' && userRole !== 'board') {
+      const publicTags = await Tag.find({ _id: { $in: tagIds }, isPublic: true });
+      if (publicTags.length !== tagIds.length) {
+        return res.status(403).json({ error: 'You can only select public tags.' });
+      }
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { tags: tagIds },
+      { returnDocument: 'after' }
+    ).select('-password').populate('tags');
+
+    res.json({ message: 'Tags updated successfully', user: updatedUser });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update tags', details: error.message });
   }
@@ -406,10 +452,47 @@ app.delete('/api/users/:userId/tags/:tagId', authenticateToken, requireAdmin, as
 });
 
 // ==========================================
+// TAG SETTINGS API ROUTES
+// ==========================================
+
+// Get Tag Creation Settings Policy
+app.get('/api/tags/settings', authenticateToken, async (req, res) => {
+  try {
+    let settings = await TagSettings.findOne();
+    if (!settings) {
+      settings = await TagSettings.create({ allowPublicCreation: false });
+    }
+    res.json({ allowPublicCreation: settings.allowPublicCreation });
+  } catch (err) {
+    console.error('Failed to fetch tag creation settings:', err);
+    res.status(500).json({ error: 'Failed to fetch tag creation settings' });
+  }
+});
+
+// Update Tag Creation Settings Policy (Admin / Board only)
+app.put('/api/tags/settings', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { allowPublicCreation } = req.body;
+    
+    let settings = await TagSettings.findOne();
+    if (!settings) {
+      settings = new TagSettings();
+    }
+    
+    settings.allowPublicCreation = !!allowPublicCreation;
+    await settings.save();
+
+    res.json({ success: true, allowPublicCreation: settings.allowPublicCreation });
+  } catch (err) {
+    console.error('Failed to update tag creation policy:', err);
+    res.status(500).json({ error: 'Failed to update tag creation policy' });
+  }
+});
+
+// ==========================================
 // ADMIN ROUTES
 // ==========================================
 
-// Get pending user approvals
 app.get('/api/admin/pending-users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const pendingUsers = await User.find({ role: { $regex: /^pending$/i } }).select('-password');
@@ -419,7 +502,6 @@ app.get('/api/admin/pending-users', authenticateToken, requireAdmin, async (req,
   }
 });
 
-// Approve user
 app.put('/api/admin/approve-user/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.params.id, { role: 'member' });
@@ -429,7 +511,6 @@ app.put('/api/admin/approve-user/:id', authenticateToken, requireAdmin, async (r
   }
 });
 
-// Reject user
 app.delete('/api/admin/reject-user/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const deletedUser = await User.findByIdAndDelete(req.params.id);
@@ -440,7 +521,6 @@ app.delete('/api/admin/reject-user/:id', authenticateToken, requireAdmin, async 
   }
 });
 
-// Fetch all users (members and admins) for User Management
 app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const users = await User.find({ role: { $ne: 'pending' } }).select('-password').populate('tags');
@@ -451,7 +531,6 @@ app.get('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
-// Update user role
 app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { role } = req.body;
@@ -485,7 +564,6 @@ app.put('/api/admin/users/:userId/role', authenticateToken, requireAdmin, async 
   }
 });
 
-// DELETE A USER (Admin Only)
 app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const targetUserId = req.params.userId;
@@ -508,7 +586,6 @@ app.delete('/api/admin/users/:userId', authenticateToken, requireAdmin, async (r
   }
 });
 
-// Start a new General Assembly session
 app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (req, res) => {
   try {
     await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
@@ -542,7 +619,6 @@ app.post('/api/admin/assembly/start', authenticateToken, requireAdmin, async (re
   }
 });
 
-// Close ALL currently active General Assembly sessions
 app.put('/api/admin/assembly/close-active', authenticateToken, requireAdmin, async (req, res) => {
   try {
     await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
@@ -553,7 +629,6 @@ app.put('/api/admin/assembly/close-active', authenticateToken, requireAdmin, asy
   }
 });
 
-// Close / End a specific General Assembly session
 app.put('/api/admin/assembly/:id/close', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const session = await AssemblySession.findByIdAndUpdate(
@@ -573,7 +648,6 @@ app.put('/api/admin/assembly/:id/close', authenticateToken, requireAdmin, async 
   }
 });
 
-// Get real-time attendees for a specific session
 app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const session = await AssemblySession.findById(req.params.id).populate(
@@ -604,7 +678,6 @@ app.get('/api/admin/assembly/:id/attendees', authenticateToken, requireAdmin, as
 // GENERAL ASSEMBLY CHECK-IN ROUTES (MEMBERS)
 // ==========================================
 
-// Get currently active session info
 app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
   try {
     const activeSession = await AssemblySession.findOne({ status: 'active' }).populate(
@@ -617,7 +690,6 @@ app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
   }
 });
 
-// Members: Check into a session via QR Code scan
 app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
   try {
     let { sessionId } = req.body;
@@ -626,9 +698,7 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
       try {
         const parsed = JSON.parse(sessionId);
         sessionId = parsed.sessionId || sessionId;
-      } catch (e) {
-        // Fallback to raw string if JSON parsing fails
-      }
+      } catch (e) {}
     }
 
     if (!sessionId) {
@@ -660,7 +730,6 @@ app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
   }
 });
 
-// Admin: Get all historical assembly sessions
 app.get('/api/assembly/sessions', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const sessions = await AssemblySession.find()
@@ -675,11 +744,17 @@ app.get('/api/assembly/sessions', authenticateToken, requireAdmin, async (req, r
 // ==========================================
 // POSTS ROUTES
 // ==========================================
-app.get('/api/posts', async (req, res) => {
+app.get('/api/posts', authenticateToken, async (req, res) => {
   try {
-    const posts = await Post.find().sort({ createdAt: -1 });
+    const posts = await Post.find()
+      .populate({
+        path: 'author',
+        select: 'name email role tags',
+        populate: { path: 'tags' }
+      })
+      .sort({ createdAt: -1 });
     res.json(posts);
-  } catch (error) {
+  } catch (err) {
     res.status(500).json({ error: 'Failed to fetch posts' });
   }
 });
@@ -941,7 +1016,6 @@ app.get('/api/events', authenticateToken, async (req, res) => {
   }
 });
 
-// CREATE EVENT + TRIGGER PUSH NOTIFICATION TO ALL MEMBERS
 app.post('/api/events', authenticateToken, async (req, res) => {
   try {
     const { title, description, date, time, location, category } = req.body;
@@ -1076,93 +1150,4 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server listening on port ${PORT}`);
-});
-app.post('/api/tags', authenticateToken, requireAdmin, async (req, res) => {
-  try {
-    const { name, color, isPublic } = req.body;
-    const newTag = new Tag({ 
-      name, 
-      color: color || '#3b82f6', 
-      isPublic: isPublic ?? false 
-    });
-    await newTag.save();
-    res.status(201).json(newTag);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create tag', details: error.message });
-  }
-});
-// Members get only public tags, admins get all tags
-app.get('/api/tags', authenticateToken, async (req, res) => {
-  try {
-    let query = {};
-    if (req.user.role !== 'admin' && req.user.role !== 'board') {
-      query = { isPublic: true };
-    }
-    const tags = await Tag.find(query);
-    res.json(tags);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch tags' });
-  }
-});
-app.put('/api/users/profile/tags', authenticateToken, async (req, res) => {
-  try {
-    const { tagIds } = req.body; // Array of Tag IDs
-    const userId = req.user.id || req.user._id;
-
-    if (!Array.isArray(tagIds)) {
-      return res.status(400).json({ error: 'tagIds must be an array.' });
-    }
-
-    // Verify all chosen tags are actually public (unless user is admin)
-    if (req.user.role !== 'admin') {
-      const publicTags = await Tag.find({ _id: { $in: tagIds }, isPublic: true });
-      if (publicTags.length !== tagIds.length) {
-        return res.status(403).json({ error: 'You can only select public tags.' });
-      }
-    }
-
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { tags: tagIds },
-      { returnDocument: 'after' }
-    ).select('-password').populate('tags');
-
-    res.json({ message: 'Tags updated successfully', user: updatedUser });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update tags', details: error.message });
-  }
-});
-// Example for Feed / Posts endpoint
-app.get('/api/posts', authenticateToken, async (req, res) => {
-  try {
-    const posts = await Post.find()
-      .populate({
-        path: 'author',
-        select: 'name email role tags',
-        populate: { path: 'tags' } // Pulls the full tag object (name, color)
-      })
-      .sort({ createdAt: -1 });
-    res.json(posts);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch posts' });
-  }
-});
-// PUT /api/tags/settings — Update public tag creation policy
-app.put('/api/tags/settings', verifyAdminToken, async (req, res) => {
-  try {
-    const { allowPublicCreation } = req.body;
-    
-    let settings = await TagSettings.findOne();
-    if (!settings) {
-      settings = new TagSettings();
-    }
-    
-    settings.allowPublicCreation = !!allowPublicCreation;
-    await settings.save();
-
-    res.json({ success: true, allowPublicCreation: settings.allowPublicCreation });
-  } catch (err) {
-    console.error('Failed to update tag creation policy:', err);
-    res.status(500).json({ error: 'Failed to update tag creation policy' });
-  }
 });
