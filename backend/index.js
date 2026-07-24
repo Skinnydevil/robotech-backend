@@ -1147,14 +1147,11 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch posts' });
   }
 });
-// Example fix for your backend tags settings route (e.g., in your Express router file)
-
-// PUT /api/tags/settings
-router.put('/settings', verifyAdminToken, async (req, res) => {
+// PUT /api/tags/settings — Update public tag creation policy
+app.put('/api/tags/settings', verifyAdminToken, async (req, res) => {
   try {
     const { allowPublicCreation } = req.body;
     
-    // Find or create a settings document in your database, or update your configuration schema
     let settings = await TagSettings.findOne();
     if (!settings) {
       settings = new TagSettings();
