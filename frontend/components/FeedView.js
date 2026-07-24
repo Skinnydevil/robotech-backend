@@ -18,11 +18,11 @@ import {
   MessageCircle,
   Image as ImageIcon,
   Send,
-  User,
-  Tag as TagIcon,
+  Trash2,
 } from 'lucide-react-native';
 
 const API_BASE_URL = 'https://robotech-backend-bc05.onrender.com/api';
+const SERVER_HOST = 'https://robotech-backend-bc05.onrender.com';
 
 export default function FeedView({ token, currentUser }) {
   const [posts, setPosts] = useState([]);
@@ -34,8 +34,13 @@ export default function FeedView({ token, currentUser }) {
   const [activeCommentPostId, setActiveCommentPostId] = useState(null);
   const [commentText, setCommentText] = useState('');
 
-  // Fetch all posts from backend
+  // Fetch all posts
   const fetchPosts = async () => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch(`${API_BASE_URL}/posts`, {
         headers: {
@@ -43,14 +48,15 @@ export default function FeedView({ token, currentUser }) {
         },
       });
       const data = await response.json();
+
       if (response.ok) {
-        setPosts(Array.isArray(data) ? data : []);
+        setPosts(Array.isArray(data) ? data : data.posts || []);
       } else {
-        Alert.alert('Error', data.error || 'Failed to load posts');
+        Alert.alert('Error', data.error || data.message || 'Failed to load posts');
       }
     } catch (error) {
       console.error('Fetch posts error:', error);
-      Alert.alert('Error', 'Unable to connect to the server');
+      Alert.alert('Network Error', 'Unable to connect to server. Pull down to refresh if server was sleeping.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -66,7 +72,7 @@ export default function FeedView({ token, currentUser }) {
     fetchPosts();
   };
 
-  // Select Image from Library
+  // Image Picker
   const pickImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissionResult.granted) {
@@ -85,7 +91,7 @@ export default function FeedView({ token, currentUser }) {
     }
   };
 
-  // Create a new post
+  // Create Post
   const handleCreatePost = async () => {
     if (!postContent.trim() && !selectedImage) {
       Alert.alert('Validation Error', 'Please enter text or select an image');
@@ -96,6 +102,7 @@ export default function FeedView({ token, currentUser }) {
     try {
       const formData = new FormData();
       formData.append('content', postContent);
+      formData.append('authorName', currentUser?.name || 'Member'); // Fallback for schema required rule
 
       if (selectedImage) {
         const filename = selectedImage.split('/').pop() || 'photo.jpg';
@@ -113,7 +120,6 @@ export default function FeedView({ token, currentUser }) {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
         },
         body: formData,
       });
@@ -124,7 +130,7 @@ export default function FeedView({ token, currentUser }) {
         setSelectedImage(null);
         fetchPosts();
       } else {
-        Alert.alert('Error', data.error || 'Failed to create post');
+        Alert.alert('Error', data.error || data.message || 'Failed to create post');
       }
     } catch (error) {
       console.error('Create post error:', error);
@@ -134,11 +140,46 @@ export default function FeedView({ token, currentUser }) {
     }
   };
 
+  // Delete Post
+  const handleDeletePost = (postId) => {
+    Alert.alert(
+      'Delete Post',
+      'Are you sure you want to delete this post?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await fetch(`${API_BASE_URL}/posts/${postId}`, {
+                method: 'DELETE',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                },
+              });
+
+              if (response.ok) {
+                setPosts((prevPosts) => prevPosts.filter((p) => p._id !== postId));
+              } else {
+                const data = await response.json();
+                Alert.alert('Error', data.error || 'Failed to delete post');
+              }
+            } catch (error) {
+              console.error('Delete error:', error);
+              Alert.alert('Error', 'Network error deleting post');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   // Like / Unlike Post
   const handleLikePost = async (postId) => {
     try {
       const response = await fetch(`${API_BASE_URL}/posts/${postId}/like`, {
-        method: 'POST',
+        method: 'PUT',
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -154,7 +195,7 @@ export default function FeedView({ token, currentUser }) {
     }
   };
 
-  // Add Comment to Post
+  // Add Comment
   const handleAddComment = async (postId) => {
     if (!commentText.trim()) return;
 
@@ -165,7 +206,10 @@ export default function FeedView({ token, currentUser }) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ text: commentText.trim() }),
+        body: JSON.stringify({
+          text: commentText.trim(),
+          authorName: currentUser?.name || 'Member',
+        }),
       });
 
       const updatedPost = await response.json();
@@ -174,7 +218,6 @@ export default function FeedView({ token, currentUser }) {
           prevPosts.map((p) => (p._id === postId ? updatedPost : p))
         );
         setCommentText('');
-        setActiveCommentPostId(null);
       } else {
         Alert.alert('Error', updatedPost.error || 'Could not post comment');
       }
@@ -184,7 +227,7 @@ export default function FeedView({ token, currentUser }) {
     }
   };
 
-  // Helper: Render User Tags
+  // Render Tags
   const renderTagBadges = (tags) => {
     if (!tags || tags.length === 0) return null;
     return (
@@ -211,15 +254,32 @@ export default function FeedView({ token, currentUser }) {
     );
   };
 
-  // Render Individual Post Item
+  // Resolve Media URL
+  const getMediaUri = (url) => {
+    if (!url) return null;
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    return `${SERVER_HOST}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  // Render Item
   const renderPostItem = ({ item }) => {
     const isLiked = item.likes?.includes(currentUser?._id);
-    const authorName = item.author?.name || 'Anonymous User';
-    const authorTags = item.author?.tags || [];
+
+    // Schema matching author name resolution
+    const authorName =
+      (typeof item.author === 'object' && item.author?.name) ||
+      item.authorName ||
+      'Anonymous User';
+
+    const authorId = typeof item.author === 'object' ? item.author?._id : item.author;
+    const isMyPost = currentUser?._id && authorId === currentUser?._id;
+    const authorTags = typeof item.author === 'object' ? item.author?.tags || [] : [];
 
     return (
       <View className="bg-[#030712] border border-slate-800 rounded-2xl p-4 mb-4">
-        {/* Author Header */}
+        {/* Header */}
         <View className="flex-row items-center mb-3">
           <View className="w-10 h-10 rounded-full bg-amber-500/20 border border-amber-500/40 justify-center items-center mr-3">
             <Text className="text-amber-500 font-bold text-sm">
@@ -230,26 +290,33 @@ export default function FeedView({ token, currentUser }) {
             <Text className="text-white font-bold text-sm">{authorName}</Text>
             {renderTagBadges(authorTags)}
           </View>
-          <Text className="text-slate-500 text-[10px]">
-            {new Date(item.createdAt).toLocaleDateString()}
-          </Text>
+          <View className="items-end gap-1">
+            <Text className="text-slate-500 text-[10px]">
+              {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : ''}
+            </Text>
+            {isMyPost && (
+              <TouchableOpacity onPress={() => handleDeletePost(item._id)} className="p-1">
+                <Trash2 size={15} color="#f43f5e" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
-        {/* Post Text Content */}
+        {/* Content */}
         {item.content ? (
           <Text className="text-slate-200 text-sm mb-3 leading-5">{item.content}</Text>
         ) : null}
 
-        {/* Post Media Attachment */}
+        {/* Media */}
         {item.mediaUrl ? (
           <Image
-            source={{ uri: item.mediaUrl }}
+            source={{ uri: getMediaUri(item.mediaUrl) }}
             className="w-full h-56 rounded-xl mb-3"
             resizeMode="cover"
           />
         ) : null}
 
-        {/* Action Buttons */}
+        {/* Actions */}
         <View className="flex-row items-center border-t border-slate-800/80 pt-3 mt-1">
           <TouchableOpacity
             onPress={() => handleLikePost(item._id)}
@@ -278,14 +345,14 @@ export default function FeedView({ token, currentUser }) {
           </TouchableOpacity>
         </View>
 
-        {/* Comments Section */}
+        {/* Comments */}
         {activeCommentPostId === item._id && (
           <View className="mt-3 pt-3 border-t border-slate-800">
             {item.comments && item.comments.length > 0 ? (
               item.comments.map((comment, index) => (
                 <View key={comment._id || index} className="bg-slate-900/60 p-2.5 rounded-lg mb-2">
                   <Text className="text-amber-500 font-bold text-xs">
-                    {comment.user?.name || 'Member'}
+                    {comment.authorName || comment.user?.name || 'Member'}
                   </Text>
                   <Text className="text-slate-300 text-xs mt-0.5">{comment.text}</Text>
                 </View>
@@ -294,7 +361,6 @@ export default function FeedView({ token, currentUser }) {
               <Text className="text-slate-500 text-xs italic mb-2">No comments yet. Be the first!</Text>
             )}
 
-            {/* Add Comment Input */}
             <View className="flex-row items-center mt-2 gap-2">
               <TextInput
                 placeholder="Write a comment..."
