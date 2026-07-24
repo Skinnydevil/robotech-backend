@@ -32,6 +32,10 @@ export default function ChatView({ user, token, socket }) {
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [showMsgActionModal, setShowMsgActionModal] = useState(false);
 
+  // State for conversation actions modal on long press
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [showConvActionModal, setShowConvActionModal] = useState(false);
+
   const flatListRef = useRef(null);
 
   const getMediaUri = (url) => {
@@ -68,6 +72,22 @@ export default function ChatView({ user, token, socket }) {
     }
   };
 
+  const updateConversationOrder = (convId, lastMessageText) => {
+    setConversations((prevConvs) => {
+      const index = prevConvs.findIndex((c) => c._id === convId);
+      if (index === -1) {
+        fetchConversations();
+        return prevConvs;
+      }
+      
+      const updatedConvs = [...prevConvs];
+      const [movedConv] = updatedConvs.splice(index, 1);
+      movedConv.lastMessage = lastMessageText;
+      
+      return [movedConv, ...updatedConvs];
+    });
+  };
+
   useEffect(() => {
     fetchConversations();
     if (socket && !socket.connected) {
@@ -76,27 +96,13 @@ export default function ChatView({ user, token, socket }) {
   }, []);
 
   useEffect(() => {
-    if (!activeConv || !socket) return;
+    if (!socket) return;
 
-    const fetchMessages = async () => {
-      try {
-        const res = await fetch(`${API_URL}/conversations/${activeConv._id}/messages`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setMessages(data);
-        }
-      } catch (err) {
-        console.error('Failed fetching messages:', err);
-      }
-    };
+    const handleGlobalNewMessage = (msg) => {
+      const targetConvId = msg.conversationId;
+      updateConversationOrder(targetConvId, msg.text);
 
-    fetchMessages();
-    socket.emit('join_conversation', activeConv._id);
-
-    const handleNewMessage = (msg) => {
-      if (msg.conversationId === activeConv._id) {
+      if (activeConv && targetConvId === activeConv._id) {
         setMessages((prev) => {
           if (prev.some((m) => m._id === msg._id)) return prev;
 
@@ -119,16 +125,40 @@ export default function ChatView({ user, token, socket }) {
       setMessages((prev) => prev.filter((m) => m._id !== messageId));
     };
 
-    socket.off('receive_private_message', handleNewMessage);
-    socket.on('receive_private_message', handleNewMessage);
+    socket.off('receive_private_message', handleGlobalNewMessage);
+    socket.on('receive_private_message', handleGlobalNewMessage);
 
     socket.off('message_deleted', handleMessageDeleted);
     socket.on('message_deleted', handleMessageDeleted);
 
     return () => {
-      socket.emit('leave_conversation', activeConv._id);
-      socket.off('receive_private_message', handleNewMessage);
+      socket.off('receive_private_message', handleGlobalNewMessage);
       socket.off('message_deleted', handleMessageDeleted);
+    };
+  }, [activeConv, socket]);
+
+  useEffect(() => {
+    if (!activeConv || !socket) return;
+
+    const fetchMessages = async () => {
+      try {
+        const res = await fetch(`${API_URL}/conversations/${activeConv._id}/messages`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setMessages(data);
+        }
+      } catch (err) {
+        console.error('Failed fetching messages:', err);
+      }
+    };
+
+    fetchMessages();
+    socket.emit('join_conversation', activeConv._id);
+
+    return () => {
+      socket.emit('leave_conversation', activeConv._id);
     };
   }, [activeConv, socket]);
 
@@ -149,6 +179,16 @@ export default function ChatView({ user, token, socket }) {
       senderTags: user.tags || [],
       createdAt: new Date().toISOString(),
     };
+
+    // Instantly move this chat to the top of your inbox list & update local conversations array reference
+    setConversations((prevConvs) => {
+      const index = prevConvs.findIndex((c) => c._id === activeConv._id);
+      if (index === -1) return prevConvs;
+      const updatedConvs = [...prevConvs];
+      const [movedConv] = updatedConvs.splice(index, 1);
+      movedConv.lastMessage = textToSend;
+      return [movedConv, ...updatedConvs];
+    });
 
     setMessages((prev) => [...prev, tempMessage]);
     setInputText('');
@@ -171,7 +211,14 @@ export default function ChatView({ user, token, socket }) {
       });
 
       if (res.ok) {
-        setMessages((prev) => prev.filter((m) => m._id !== msgId));
+        setMessages((prev) => {
+          const updatedMessages = prev.filter((m) => m._id !== msgId);
+          // If conversation becomes empty after deletion, remove it from list
+          if (updatedMessages.length === 0 && activeConv) {
+            setConversations((convs) => convs.filter((c) => c._id !== activeConv._id));
+          }
+          return updatedMessages;
+        });
         setShowMsgActionModal(false);
         setSelectedMessage(null);
       } else {
@@ -179,6 +226,29 @@ export default function ChatView({ user, token, socket }) {
       }
     } catch (err) {
       console.error('Failed deleting message:', err);
+      Alert.alert('Error', 'Network request failed.');
+    }
+  };
+
+  const handleDeleteConversation = async (convId) => {
+    try {
+      const res = await fetch(`${API_URL}/conversations/${convId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        setConversations((prev) => prev.filter((c) => c._id !== convId));
+        setShowConvActionModal(false);
+        setSelectedConversation(null);
+        if (activeConv && activeConv._id === convId) {
+          setActiveConv(null);
+        }
+      } else {
+        Alert.alert('Error', 'Could not delete the conversation.');
+      }
+    } catch (err) {
+      console.error('Failed deleting conversation:', err);
       Alert.alert('Error', 'Network request failed.');
     }
   };
@@ -203,7 +273,7 @@ export default function ChatView({ user, token, socket }) {
         setShowModal(false);
         setSelectedMemberIds([]);
         setGroupName('');
-        fetchConversations();
+        await fetchConversations();
         setActiveConv(newConv);
       }
     } catch (err) {
@@ -435,6 +505,10 @@ export default function ChatView({ user, token, socket }) {
           return (
             <TouchableOpacity
               onPress={() => setActiveConv(item)}
+              onLongPress={() => {
+                setSelectedConversation(item);
+                setShowConvActionModal(true);
+              }}
               className="bg-[#0b0f19] border border-slate-800/80 p-4 rounded-2xl mb-2.5 flex-row justify-between items-center shadow-md active:bg-slate-900"
             >
               <View className="flex-row items-center flex-1 mr-2">
@@ -462,6 +536,35 @@ export default function ChatView({ user, token, socket }) {
           );
         }}
       />
+
+      {/* Conversation Action Modal (Delete Conversation Option) */}
+      <Modal visible={showConvActionModal} animationType="fade" transparent>
+        <View className="flex-1 bg-black/60 justify-center items-center p-6">
+          <View className="bg-[#0b0f19] border border-slate-800 w-full max-w-xs rounded-2xl p-5 shadow-2xl">
+            <Text className="text-white font-bold text-base mb-2 text-center">Conversation Options</Text>
+            <Text className="text-slate-400 text-xs text-center mb-5" numberOfLines={2}>
+              {selectedConversation ? getChatTitle(selectedConversation) : ''}
+            </Text>
+
+            <TouchableOpacity
+              onPress={() => handleDeleteConversation(selectedConversation?._id)}
+              className="bg-rose-500/20 border border-rose-500/50 py-3 rounded-xl mb-2 items-center active:scale-95"
+            >
+              <Text className="text-rose-400 font-bold text-xs uppercase tracking-wider">Delete Chat</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                setShowConvActionModal(false);
+                setSelectedConversation(null);
+              }}
+              className="bg-slate-900 border border-slate-800 py-3 rounded-xl items-center active:scale-95"
+            >
+              <Text className="text-slate-300 font-bold text-xs uppercase tracking-wider">Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={showModal} animationType="slide" transparent>
         <SafeAreaView className="flex-1 bg-[#05070a] p-4">
