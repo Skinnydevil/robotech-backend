@@ -11,6 +11,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const multer = require('multer');
+const { Expo } = require('expo-server-sdk');
 
 const Post = require('./Post');
 const Conversation = require('./Conversation');
@@ -18,20 +19,19 @@ const ChatMessage = require('./ChatMessage');
 
 const app = express();
 const server = http.createServer(app);
+const expo = new Expo();
 
 const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(cors());
 app.use(express.json());
 
-// Serve uploaded media files statically so the app can render them
+// Serve uploaded media files statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Configure Multer Storage for photos/videos
+// Multer Storage Configuration
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
+  destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
@@ -40,8 +40,35 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB max file limit
+  limits: { fileSize: 50 * 1024 * 1024 }
 });
+
+// Helper function to send Expo Push Notifications
+const sendPushNotifications = async (tokens, title, body, data = {}) => {
+  const messages = [];
+  for (let pushToken of tokens) {
+    if (!Expo.isExpoPushToken(pushToken)) {
+      console.error(`Push token ${pushToken} is not a valid Expo push token`);
+      continue;
+    }
+    messages.push({
+      to: pushToken,
+      sound: 'default',
+      title,
+      body,
+      data,
+    });
+  }
+
+  const chunks = expo.chunkPushNotifications(messages);
+  for (let chunk of chunks) {
+    try {
+      await expo.sendPushNotificationsAsync(chunk);
+    } catch (error) {
+      console.error('Error sending push notification:', error);
+    }
+  }
+};
 
 // ==========================================
 // DATABASE & MIDDLEWARE
@@ -54,12 +81,13 @@ const UserSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ['pending', 'member', 'admin'], default: 'pending' }
+  role: { type: String, enum: ['pending', 'member', 'admin'], default: 'pending' },
+  pushToken: { type: String, default: null } // Stores device push notification token
 }, { timestamps: true });
 
 const User = mongoose.model('User', UserSchema);
 
-// Authentication Middleware to secure routes
+// Authentication Middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -73,25 +101,31 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Save / Update Push Token Route
+app.put('/api/users/push-token', authenticateToken, async (req, res) => {
+  try {
+    const { pushToken } = req.body;
+    await User.findByIdAndUpdate(req.user.id, { pushToken });
+    res.json({ message: 'Push token saved successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update push token' });
+  }
+});
+
 // ==========================================
 // AUTHENTICATION ROUTES
 // ==========================================
-
-// REGISTER ROUTE
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
     
-    // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ error: "Email is already registered" });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new user with default 'pending' role
     const newUser = new User({
       name,
       email,
@@ -100,7 +134,6 @@ app.post('/api/auth/register', async (req, res) => {
     });
 
     await newUser.save();
-
     res.status(201).json({ message: "Registration successful! Please wait for admin approval." });
   } catch (error) {
     console.error("Register error:", error);
@@ -108,19 +141,23 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// LOGIN ROUTE (With Pending User Block)
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, pushToken } = req.body;
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ error: "Invalid credentials" });
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) return res.status(400).json({ error: "Invalid credentials" });
 
-    // 🛑 Block pending users from logging in
     if (user.role === 'pending') {
-      return res.status(403).json({ error: "Your account is pending admin approval. Please wait for an administrator to activate your account." });
+      return res.status(403).json({ error: "Your account is pending admin approval." });
+    }
+
+    // Save push token if provided on login
+    if (pushToken) {
+      user.pushToken = pushToken;
+      await user.save();
     }
 
     const token = jwt.sign({ id: user._id, name: user.name, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
@@ -161,16 +198,10 @@ app.put('/api/admin/approve-user/:id', async (req, res) => {
   }
 });
 
-// Delete/Reject a pending member request
 app.delete('/api/admin/reject-user/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    const deletedUser = await User.findByIdAndDelete(id);
-
-    if (!deletedUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
+    const deletedUser = await User.findByIdAndDelete(req.params.id);
+    if (!deletedUser) return res.status(404).json({ message: "User not found" });
     res.status(200).json({ message: "User request deleted" });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -192,7 +223,6 @@ app.get('/api/posts', async (req, res) => {
 app.post('/api/posts', upload.single('media'), async (req, res) => {
   try {
     const { authorName, authorRole, content, category } = req.body;
-    
     if (!content && !req.file) {
       return res.status(400).json({ error: 'Post must contain text or media' });
     }
@@ -217,12 +247,10 @@ app.post('/api/posts', upload.single('media'), async (req, res) => {
     await newPost.save();
     res.status(201).json(newPost);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: 'Failed to create post' });
   }
 });
 
-// LIKE / UNLIKE ROUTE
 app.put('/api/posts/:id/like', authenticateToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -244,7 +272,6 @@ app.put('/api/posts/:id/like', authenticateToken, async (req, res) => {
   }
 });
 
-// ADD COMMENT ROUTE
 app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
   try {
     const { text, parentId } = req.body;
@@ -271,13 +298,10 @@ app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
   }
 });
 
-// DELETE POST ROUTE (Author or Admin only)
 app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
-    }
+    if (!post) return res.status(404).json({ error: 'Post not found' });
 
     const isAuthor = post.authorName === req.user.name || post.authorId?.toString() === req.user.id;
     const isAdmin = req.user.role === 'admin';
@@ -289,53 +313,38 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
     await Post.findByIdAndDelete(req.params.id);
     res.json({ message: 'Post deleted successfully' });
   } catch (error) {
-    console.error('Delete post error:', error);
     res.status(500).json({ error: 'Failed to delete post' });
   }
 });
 
 // ==========================================
-// USER PROFILE & PASSWORD UPDATE ROUTE
+// USER PROFILE ROUTE
 // ==========================================
 app.put('/api/users/profile', authenticateToken, async (req, res) => {
   try {
     const { name, currentPassword, newPassword } = req.body;
-    
     const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     if (newPassword) {
       if (!currentPassword) {
-        return res.status(400).json({ error: 'Current password is required to set a new password' });
+        return res.status(400).json({ error: 'Current password is required' });
       }
-
       const isMatch = await bcrypt.compare(currentPassword, user.password);
       if (!isMatch) {
         return res.status(400).json({ error: 'Incorrect current password' });
       }
-
       user.password = await bcrypt.hash(newPassword, 10);
     }
 
-    if (name && name.trim()) {
-      user.name = name.trim();
-    }
-
+    if (name && name.trim()) user.name = name.trim();
     await user.save();
 
     res.json({ 
       message: 'Profile updated successfully',
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role }
     });
   } catch (err) {
-    console.error('Update profile error:', err);
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
@@ -399,8 +408,7 @@ app.post('/api/conversations', authenticateToken, async (req, res) => {
 
 app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) => {
   try {
-    const messages = await ChatMessage.find({ conversationId: req.params.id })
-      .sort({ createdAt: 1 });
+    const messages = await ChatMessage.find({ conversationId: req.params.id }).sort({ createdAt: 1 });
     res.json(messages);
   } catch (err) {
     res.status(500).json({ error: 'Failed to load messages' });
@@ -408,12 +416,12 @@ app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) =
 });
 
 // ==========================================
-// EVENT SCHEMA & ROUTES
+// EVENT SCHEMA & ROUTES WITH NOTIFICATIONS
 // ==========================================
 const eventSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: String,
-  date: { type: String, required: true }, // Saved as YYYY-MM-DD string
+  date: { type: String, required: true },
   time: String,
   location: String,
   category: { type: String, enum: ['Competition', 'Build Session', 'Workshop', 'General'], default: 'General' },
@@ -423,18 +431,16 @@ const eventSchema = new mongoose.Schema({
 
 const Event = mongoose.model('Event', eventSchema);
 
-// GET all events
 app.get('/api/events', authenticateToken, async (req, res) => {
   try {
     const events = await Event.find().sort({ date: 1 });
     res.json(events);
   } catch (err) {
-    console.error('Fetch events error:', err);
     res.status(500).json({ error: 'Failed to fetch events' });
   }
 });
 
-// POST create event (Requires Auth)
+// CREATE EVENT + TRIGGER PUSH NOTIFICATION TO ALL MEMBERS
 app.post('/api/events', authenticateToken, async (req, res) => {
   try {
     const { title, description, date, time, location, category } = req.body;
@@ -454,6 +460,23 @@ app.post('/api/events', authenticateToken, async (req, res) => {
     });
 
     await newEvent.save();
+
+    // 🔔 Notify all members except creator
+    const membersToNotify = await User.find({
+      _id: { $ne: req.user.id },
+      pushToken: { $ne: null }
+    }).select('pushToken');
+
+    const tokens = membersToNotify.map(u => u.pushToken);
+    if (tokens.length > 0) {
+      await sendPushNotifications(
+        tokens,
+        `📅 New Event Scheduled: ${title}`,
+        `${date}${time ? ' at ' + time : ''}${location ? ' - ' + location : ''}`,
+        { type: 'EVENT', eventId: newEvent._id }
+      );
+    }
+
     res.status(201).json(newEvent);
   } catch (err) {
     console.error('Create event error:', err);
@@ -461,7 +484,6 @@ app.post('/api/events', authenticateToken, async (req, res) => {
   }
 });
 
-// PUT toggle RSVP
 app.put('/api/events/:id/rsvp', authenticateToken, async (req, res) => {
   try {
     const event = await Event.findById(req.params.id);
@@ -484,7 +506,7 @@ app.put('/api/events/:id/rsvp', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// SOCKET.IO ROOM MANAGEMENT
+// SOCKET.IO REAL-TIME CHAT WITH NOTIFICATIONS
 // ==========================================
 io.on('connection', (socket) => {
   socket.on('join_conversation', (conversationId) => {
@@ -507,12 +529,28 @@ io.on('connection', (socket) => {
       });
       await newMessage.save();
 
-      await Conversation.findByIdAndUpdate(conversationId, {
+      const conv = await Conversation.findByIdAndUpdate(conversationId, {
         lastMessage: text,
         updatedAt: Date.now()
-      });
+      }).populate('participants');
 
+      // Emit real-time message via socket
       io.to(conversationId).emit('receive_private_message', newMessage);
+
+      // 🔔 Push notification for offline/background chat recipients
+      const recipientsToNotify = conv.participants.filter(
+        (p) => p._id.toString() !== senderId && p.pushToken
+      );
+
+      const tokens = recipientsToNotify.map((p) => p.pushToken);
+      if (tokens.length > 0) {
+        await sendPushNotifications(
+          tokens,
+          `💬 Message from ${senderName}`,
+          text.length > 50 ? `${text.substring(0, 50)}...` : text,
+          { type: 'CHAT', conversationId }
+        );
+      }
     } catch (err) {
       console.error('Socket error:', err);
     }
@@ -521,5 +559,5 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Backend server listening on port ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });

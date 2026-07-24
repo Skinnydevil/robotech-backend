@@ -17,7 +17,17 @@ import {
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
-import { Menu, Settings, LayoutGrid, MessageSquare, ShieldAlert, Lock, User, CheckCircle2, Calendar as CalendarIcon } from 'lucide-react-native';
+import {
+  Menu,
+  Settings,
+  LayoutGrid,
+  MessageSquare,
+  ShieldAlert,
+  Lock,
+  User,
+  CheckCircle2,
+  Calendar as CalendarIcon,
+} from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
 import ChatView from './components/ChatView';
@@ -25,7 +35,7 @@ import FeedView from './components/FeedView';
 import CalendarView from './components/CalendarView';
 import SideMenu from './components/SideMenu';
 
-const API_URL = 'https://robotech-backend-bc05.onrender.com/api'; 
+const API_URL = 'https://robotech-backend-bc05.onrender.com/api';
 const SOCKET_URL = 'https://robotech-backend-bc05.onrender.com';
 const ClubLogo = require('./assets/logo.png');
 
@@ -57,21 +67,20 @@ function MainAppContent() {
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   // Immediate State-Switch Navigation (Eliminates Double-Tap Bug)
-  // Smooth, Instant Tab Switch (Fixes Screen Dimming / Darkening Issue)
-const changeTab = (newTab) => {
-  if (newTab === activeTab) return;
-  
-  // 1. Immediately update active tab so UI responds without lag
-  setActiveTab(newTab);
-  
-  // 2. Gentle fade effect starting from 85% opacity (no harsh darkening)
-  fadeAnim.setValue(0.85);
-  Animated.timing(fadeAnim, {
-    toValue: 1,
-    duration: 150,
-    useNativeDriver: true,
-  }).start();
-};
+  const changeTab = (newTab) => {
+    if (newTab === activeTab) return;
+
+    // 1. Immediately update active tab so UI responds without lag
+    setActiveTab(newTab);
+
+    // 2. Gentle fade effect starting from 85% opacity
+    fadeAnim.setValue(0.85);
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: true,
+    }).start();
+  };
 
   useEffect(() => {
     const checkToken = async () => {
@@ -121,8 +130,8 @@ const changeTab = (newTab) => {
     }
 
     const endpoint = isLogin ? '/auth/login' : '/auth/register';
-    const payload = isLogin 
-      ? { email: email.trim(), password } 
+    const payload = isLogin
+      ? { email: email.trim(), password }
       : { name: name.trim(), email: email.trim(), password };
 
     try {
@@ -162,14 +171,14 @@ const changeTab = (newTab) => {
     try {
       const res = await fetch(`${API_URL}/users/profile`, {
         method: 'PUT',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` 
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ 
-          name: updateName, 
-          currentPassword, 
-          newPassword: newPassword || undefined 
+        body: JSON.stringify({
+          name: updateName,
+          currentPassword,
+          newPassword: newPassword || undefined,
         }),
       });
 
@@ -226,7 +235,7 @@ const changeTab = (newTab) => {
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             className="flex-1"
           >
-            <ScrollView 
+            <ScrollView
               contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
               keyboardShouldPersistTaps="handled"
               className="p-6 bg-slate-950"
@@ -328,8 +337,8 @@ const changeTab = (newTab) => {
             <TouchableOpacity
               onPress={() => changeTab('settings')}
               className={`bg-slate-950 border p-2.5 rounded-xl ${
-                activeTab === 'settings' 
-                  ? 'bg-amber-500/20 border-amber-500/60' 
+                activeTab === 'settings'
+                  ? 'bg-amber-500/20 border-amber-500/60'
                   : 'border-amber-500/30'
               }`}
             >
@@ -357,15 +366,19 @@ const changeTab = (newTab) => {
                 <Text className="text-slate-400 text-xs mb-6">Manage profile details and security</Text>
 
                 {settingsMsg.text ? (
-                  <View className={`p-3.5 rounded-2xl mb-4 border flex-row items-center gap-2 ${
-                    settingsMsg.type === 'error' 
-                      ? 'bg-rose-500/10 border-rose-500/30' 
-                      : 'bg-emerald-500/10 border-emerald-500/30'
-                  }`}>
+                  <View
+                    className={`p-3.5 rounded-2xl mb-4 border flex-row items-center gap-2 ${
+                      settingsMsg.type === 'error'
+                        ? 'bg-rose-500/10 border-rose-500/30'
+                        : 'bg-emerald-500/10 border-emerald-500/30'
+                    }`}
+                  >
                     <CheckCircle2 size={16} color={settingsMsg.type === 'error' ? '#fb7185' : '#34d399'} />
-                    <Text className={`text-xs font-bold ${
-                      settingsMsg.type === 'error' ? 'text-rose-400' : 'text-emerald-400'
-                    }`}>
+                    <Text
+                      className={`text-xs font-bold ${
+                        settingsMsg.type === 'error' ? 'text-rose-400' : 'text-emerald-400'
+                      }`}
+                    >
                       {settingsMsg.text}
                     </Text>
                   </View>
@@ -376,7 +389,7 @@ const changeTab = (newTab) => {
                     <User size={16} color="#f59e0b" />
                     <Text className="text-slate-200 font-bold text-xs uppercase tracking-wider">Profile Information</Text>
                   </View>
-                  
+
                   <Text className="text-slate-400 text-xs mb-1.5 font-medium">Display Name</Text>
                   <TextInput
                     value={updateName}
@@ -399,7 +412,7 @@ const changeTab = (newTab) => {
                     <Lock size={16} color="#f59e0b" />
                     <Text className="text-slate-200 font-bold text-xs uppercase tracking-wider">Security & Credentials</Text>
                   </View>
-                  
+
                   <Text className="text-slate-400 text-xs mb-1.5 font-medium">Current Password</Text>
                   <TextInput
                     value={currentPassword}
@@ -433,7 +446,7 @@ const changeTab = (newTab) => {
           </Animated.View>
 
           {/* Bottom Bar */}
-          <View 
+          <View
             className="flex-row border-t border-slate-800/80 bg-slate-900 px-3 pt-3 gap-1.5"
             style={{ paddingBottom: Math.max(insets.bottom, 12) }}
           >
@@ -441,15 +454,17 @@ const changeTab = (newTab) => {
               onPress={() => changeTab('feed')}
               activeOpacity={0.6}
               className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-                activeTab === 'feed' 
-                  ? 'bg-amber-500/15 border border-amber-500/40' 
+                activeTab === 'feed'
+                  ? 'bg-amber-500/15 border border-amber-500/40'
                   : 'bg-transparent'
               }`}
             >
               <LayoutGrid size={15} color={activeTab === 'feed' ? '#f59e0b' : '#64748b'} />
-              <Text className={`font-bold text-[11px] tracking-wide ${
-                activeTab === 'feed' ? 'text-amber-500' : 'text-slate-400'
-              }`}>
+              <Text
+                className={`font-bold text-[11px] tracking-wide ${
+                  activeTab === 'feed' ? 'text-amber-500' : 'text-slate-400'
+                }`}
+              >
                 Feed
               </Text>
             </TouchableOpacity>
@@ -458,15 +473,17 @@ const changeTab = (newTab) => {
               onPress={() => changeTab('chat')}
               activeOpacity={0.6}
               className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-                activeTab === 'chat' 
-                  ? 'bg-amber-500/15 border border-amber-500/40' 
+                activeTab === 'chat'
+                  ? 'bg-amber-500/15 border border-amber-500/40'
                   : 'bg-transparent'
               }`}
             >
               <MessageSquare size={15} color={activeTab === 'chat' ? '#f59e0b' : '#64748b'} />
-              <Text className={`font-bold text-[11px] tracking-wide ${
-                activeTab === 'chat' ? 'text-amber-500' : 'text-slate-400'
-              }`}>
+              <Text
+                className={`font-bold text-[11px] tracking-wide ${
+                  activeTab === 'chat' ? 'text-amber-500' : 'text-slate-400'
+                }`}
+              >
                 Chat
               </Text>
             </TouchableOpacity>
@@ -475,15 +492,17 @@ const changeTab = (newTab) => {
               onPress={() => changeTab('calendar')}
               activeOpacity={0.6}
               className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-                activeTab === 'calendar' 
-                  ? 'bg-amber-500/15 border border-amber-500/40' 
+                activeTab === 'calendar'
+                  ? 'bg-amber-500/15 border border-amber-500/40'
                   : 'bg-transparent'
               }`}
             >
               <CalendarIcon size={15} color={activeTab === 'calendar' ? '#f59e0b' : '#64748b'} />
-              <Text className={`font-bold text-[11px] tracking-wide ${
-                activeTab === 'calendar' ? 'text-amber-500' : 'text-slate-400'
-              }`}>
+              <Text
+                className={`font-bold text-[11px] tracking-wide ${
+                  activeTab === 'calendar' ? 'text-amber-500' : 'text-slate-400'
+                }`}
+              >
                 Events
               </Text>
             </TouchableOpacity>
@@ -493,15 +512,17 @@ const changeTab = (newTab) => {
                 onPress={() => changeTab('admin')}
                 activeOpacity={0.6}
                 className={`flex-1 py-2.5 rounded-xl justify-center items-center flex-row gap-1.5 ${
-                  activeTab === 'admin' 
-                    ? 'bg-amber-500/15 border border-amber-500/40' 
+                  activeTab === 'admin'
+                    ? 'bg-amber-500/15 border border-amber-500/40'
                     : 'bg-transparent'
                 }`}
               >
                 <ShieldAlert size={15} color={activeTab === 'admin' ? '#f59e0b' : '#64748b'} />
-                <Text className={`font-bold text-[11px] tracking-wide ${
-                  activeTab === 'admin' ? 'text-amber-500' : 'text-slate-400'
-                }`}>
+                <Text
+                  className={`font-bold text-[11px] tracking-wide ${
+                    activeTab === 'admin' ? 'text-amber-500' : 'text-slate-400'
+                  }`}
+                >
                   Admin
                 </Text>
               </TouchableOpacity>
