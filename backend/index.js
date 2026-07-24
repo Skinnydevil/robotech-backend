@@ -21,7 +21,7 @@ const app = express();
 const server = http.createServer(app);
 const expo = new Expo();
 
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json());
@@ -33,14 +33,14 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
+  },
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 }
+  limits: { fileSize: 50 * 1024 * 1024 },
 });
 
 // Helper function to send Expo Push Notifications
@@ -71,21 +71,43 @@ const sendPushNotifications = async (tokens, title, body, data = {}) => {
 };
 
 // ==========================================
-// DATABASE & MIDDLEWARE
+// DATABASE & SCHEMAS
 // ==========================================
-mongoose.connect(process.env.MONGO_URI)
+mongoose
+  .connect(process.env.MONGO_URI)
   .then(() => console.log('🔌 Connected securely to MongoDB Cloud Database'))
   .catch((err) => console.error('❌ Database connection failed:', err));
 
-const UserSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ['pending', 'member', 'admin'], default: 'pending' },
-  pushToken: { type: String, default: null } // Stores device push notification token
-}, { timestamps: true });
+const UserSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    role: { type: String, enum: ['pending', 'member', 'admin'], default: 'pending' },
+    pushToken: { type: String, default: null }, // Stores device push notification token
+  },
+  { timestamps: true }
+);
 
 const User = mongoose.model('User', UserSchema);
+
+// General Assembly Session Schema
+const assemblySessionSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true, default: 'General Assembly' },
+    hostId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    status: { type: String, enum: ['active', 'closed'], default: 'active' },
+    attendees: [
+      {
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        checkedInAt: { type: Date, default: Date.now },
+      },
+    ],
+  },
+  { timestamps: true }
+);
+
+const AssemblySession = mongoose.model('AssemblySession', assemblySessionSchema);
 
 // Authentication Middleware
 const authenticateToken = (req, res, next) => {
@@ -118,10 +140,10 @@ app.put('/api/users/push-token', authenticateToken, async (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    
+
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({ error: "Email is already registered" });
+      return res.status(400).json({ error: 'Email is already registered' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -130,14 +152,14 @@ app.post('/api/auth/register', async (req, res) => {
       name,
       email,
       password: hashedPassword,
-      role: 'pending'
+      role: 'pending',
     });
 
     await newUser.save();
-    res.status(201).json({ message: "Registration successful! Please wait for admin approval." });
+    res.status(201).json({ message: 'Registration successful! Please wait for admin approval.' });
   } catch (error) {
-    console.error("Register error:", error);
-    res.status(500).json({ error: "Server registration error" });
+    console.error('Register error:', error);
+    res.status(500).json({ error: 'Server registration error' });
   }
 });
 
@@ -145,13 +167,13 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, pushToken } = req.body;
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ error: "Invalid credentials" });
+    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
 
     const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) return res.status(400).json({ error: "Invalid credentials" });
+    if (!validPassword) return res.status(400).json({ error: 'Invalid credentials' });
 
     if (user.role === 'pending') {
-      return res.status(403).json({ error: "Your account is pending admin approval." });
+      return res.status(403).json({ error: 'Your account is pending admin approval.' });
     }
 
     // Save push token if provided on login
@@ -160,20 +182,24 @@ app.post('/api/auth/login', async (req, res) => {
       await user.save();
     }
 
-    const token = jwt.sign({ id: user._id, name: user.name, role: user.role }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    
+    const token = jwt.sign(
+      { id: user._id, name: user.name, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
     res.json({
       token,
       user: {
         _id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role
-      }
+        role: user.role,
+      },
     });
   } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ error: "Server login error" });
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Server login error' });
   }
 });
 
@@ -201,10 +227,98 @@ app.put('/api/admin/approve-user/:id', async (req, res) => {
 app.delete('/api/admin/reject-user/:id', async (req, res) => {
   try {
     const deletedUser = await User.findByIdAndDelete(req.params.id);
-    if (!deletedUser) return res.status(404).json({ message: "User not found" });
-    res.status(200).json({ message: "User request deleted" });
+    if (!deletedUser) return res.status(404).json({ message: 'User not found' });
+    res.status(200).json({ message: 'User request deleted' });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+// ==========================================
+// GENERAL ASSEMBLY CHECK-IN ROUTES
+// ==========================================
+
+// Admin: Create or fetch an active General Assembly session
+app.post('/api/assembly/session', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can create assembly sessions' });
+    }
+
+    // Close existing active sessions
+    await AssemblySession.updateMany({ status: 'active' }, { status: 'closed' });
+
+    const newSession = new AssemblySession({
+      title: req.body.title || 'General Assembly',
+      hostId: req.user.id,
+      status: 'active',
+      attendees: [],
+    });
+
+    await newSession.save();
+    res.status(201).json(newSession);
+  } catch (err) {
+    console.error('Error starting assembly session:', err);
+    res.status(500).json({ error: 'Failed to create assembly session' });
+  }
+});
+
+// Get currently active General Assembly session
+app.get('/api/assembly/session/active', authenticateToken, async (req, res) => {
+  try {
+    const activeSession = await AssemblySession.findOne({ status: 'active' }).populate(
+      'attendees.userId',
+      'name email'
+    );
+    res.json(activeSession || null);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch active session' });
+  }
+});
+
+// Members: Check into a General Assembly session via scanned QR code
+app.post('/api/assembly/checkin', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID is required for check-in' });
+    }
+
+    const session = await AssemblySession.findById(sessionId);
+    if (!session || session.status !== 'active') {
+      return res.status(400).json({ error: 'Assembly session is either expired or invalid' });
+    }
+
+    const alreadyCheckedIn = session.attendees.some(
+      (a) => a.userId.toString() === req.user.id.toString()
+    );
+
+    if (alreadyCheckedIn) {
+      return res.status(200).json({ message: 'You are already checked into this session!' });
+    }
+
+    session.attendees.push({ userId: req.user.id, checkedInAt: new Date() });
+    await session.save();
+
+    res.status(200).json({ message: 'Check-in successful! Attendance logged.' });
+  } catch (err) {
+    console.error('Check-in error:', err);
+    res.status(500).json({ error: 'Failed to record check-in' });
+  }
+});
+
+// Admin: Get all historical assembly sessions
+app.get('/api/assembly/sessions', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    const sessions = await AssemblySession.find()
+      .populate('attendees.userId', 'name email')
+      .sort({ createdAt: -1 });
+    res.json(sessions);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch historical assembly sessions' });
   }
 });
 
@@ -241,7 +355,7 @@ app.post('/api/posts', upload.single('media'), async (req, res) => {
       content: content || '',
       category: category || 'General',
       mediaUrl,
-      mediaType
+      mediaType,
     });
 
     await newPost.save();
@@ -286,7 +400,7 @@ app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
       authorName: req.user.name || 'Builder',
       authorId: req.user.id,
       text: text.trim(),
-      parentId: parentId || null
+      parentId: parentId || null,
     };
 
     post.comments.push(newComment);
@@ -340,9 +454,9 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
     if (name && name.trim()) user.name = name.trim();
     await user.save();
 
-    res.json({ 
+    res.json({
       message: 'Profile updated successfully',
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role }
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role },
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update profile' });
@@ -354,8 +468,9 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
 // ==========================================
 app.get('/api/users/members', authenticateToken, async (req, res) => {
   try {
-    const members = await User.find({ role: { $ne: 'pending' }, _id: { $ne: req.user.id } })
-      .select('name email role _id');
+    const members = await User.find({ role: { $ne: 'pending' }, _id: { $ne: req.user.id } }).select(
+      'name email role _id'
+    );
     res.json(members);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch members' });
@@ -380,14 +495,14 @@ app.post('/api/conversations', authenticateToken, async (req, res) => {
     if (!isGroup) {
       let existingConv = await Conversation.findOne({
         isGroup: false,
-        participants: { $all: [req.user.id, recipientId], $size: 2 }
+        participants: { $all: [req.user.id, recipientId], $size: 2 },
       }).populate('participants', 'name role email');
 
       if (existingConv) return res.json(existingConv);
 
       const newConv = new Conversation({
         isGroup: false,
-        participants: [req.user.id, recipientId]
+        participants: [req.user.id, recipientId],
       });
       await newConv.save();
       return res.json(await newConv.populate('participants', 'name role email'));
@@ -397,7 +512,7 @@ app.post('/api/conversations', authenticateToken, async (req, res) => {
     const newGroup = new Conversation({
       isGroup: true,
       groupName: groupName || 'New Group',
-      participants: allParticipants
+      participants: allParticipants,
     });
     await newGroup.save();
     res.json(await newGroup.populate('participants', 'name role email'));
@@ -408,7 +523,9 @@ app.post('/api/conversations', authenticateToken, async (req, res) => {
 
 app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) => {
   try {
-    const messages = await ChatMessage.find({ conversationId: req.params.id }).sort({ createdAt: 1 });
+    const messages = await ChatMessage.find({ conversationId: req.params.id }).sort({
+      createdAt: 1,
+    });
     res.json(messages);
   } catch (err) {
     res.status(500).json({ error: 'Failed to load messages' });
@@ -418,16 +535,23 @@ app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) =
 // ==========================================
 // EVENT SCHEMA & ROUTES WITH NOTIFICATIONS
 // ==========================================
-const eventSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  description: String,
-  date: { type: String, required: true },
-  time: String,
-  location: String,
-  category: { type: String, enum: ['Competition', 'Build Session', 'Workshop', 'General'], default: 'General' },
-  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  rsvps: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-}, { timestamps: true });
+const eventSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    description: String,
+    date: { type: String, required: true },
+    time: String,
+    location: String,
+    category: {
+      type: String,
+      enum: ['Competition', 'Build Session', 'Workshop', 'General'],
+      default: 'General',
+    },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rsvps: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  },
+  { timestamps: true }
+);
 
 const Event = mongoose.model('Event', eventSchema);
 
@@ -464,10 +588,10 @@ app.post('/api/events', authenticateToken, async (req, res) => {
     // 🔔 Notify all members except creator
     const membersToNotify = await User.find({
       _id: { $ne: req.user.id },
-      pushToken: { $ne: null }
+      pushToken: { $ne: null },
     }).select('pushToken');
 
-    const tokens = membersToNotify.map(u => u.pushToken);
+    const tokens = membersToNotify.map((u) => u.pushToken);
     if (tokens.length > 0) {
       await sendPushNotifications(
         tokens,
@@ -525,13 +649,13 @@ io.on('connection', (socket) => {
         conversationId,
         senderId,
         senderName,
-        text
+        text,
       });
       await newMessage.save();
 
       const conv = await Conversation.findByIdAndUpdate(conversationId, {
         lastMessage: text,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
       }).populate('participants');
 
       // Emit real-time message via socket

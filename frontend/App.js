@@ -13,10 +13,13 @@ import {
   ScrollView,
   Animated,
   Keyboard,
+  Modal,
+  Alert,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import io from 'socket.io-client';
+import { Camera, CameraScanMode } from 'react-native-camera-kit';
 import {
   Menu,
   Settings,
@@ -27,6 +30,8 @@ import {
   User,
   CheckCircle2,
   Calendar as CalendarIcon,
+  QrCode,
+  X,
 } from 'lucide-react-native';
 
 import AdminView from './components/AdminView';
@@ -63,17 +68,19 @@ function MainAppContent() {
   const [newPassword, setNewPassword] = useState('');
   const [settingsMsg, setSettingsMsg] = useState({ type: '', text: '' });
 
+  // Assembly Check-In Scanner State
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [isSubmittingCheckIn, setIsSubmittingCheckIn] = useState(false);
+
   const socketRef = useRef(null);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
-  // Immediate State-Switch Navigation (Eliminates Double-Tap Bug)
+  // Immediate State-Switch Navigation
   const changeTab = (newTab) => {
     if (newTab === activeTab) return;
 
-    // 1. Immediately update active tab so UI responds without lag
     setActiveTab(newTab);
 
-    // 2. Gentle fade effect starting from 85% opacity
     fadeAnim.setValue(0.85);
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -196,6 +203,52 @@ function MainAppContent() {
       setSettingsMsg({ type: 'success', text: 'Profile updated successfully!' });
     } catch (err) {
       setSettingsMsg({ type: 'error', text: 'Failed to update profile.' });
+    }
+  };
+
+  // Assembly Check-In QR Handler
+  const handleReadCode = async (event) => {
+    if (isSubmittingCheckIn) return;
+
+    const qrData = event.nativeEvent.codeStringValue;
+    if (!qrData || !qrData.includes('robotech://checkin')) {
+      return;
+    }
+
+    setIsSubmittingCheckIn(true);
+
+    try {
+      // Extract sessionId from parameter URL query
+      const urlParams = new URLSearchParams(qrData.split('?')[1]);
+      const sessionId = urlParams.get('sessionId');
+
+      if (!sessionId) {
+        Alert.alert('Invalid Code', 'This QR code is not a valid General Assembly session token.');
+        setIsSubmittingCheckIn(false);
+        return;
+      }
+
+      const res = await fetch(`${API_URL}/assembly/checkin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ sessionId }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setScannerVisible(false);
+        Alert.alert('Check-In Confirmed! 🎯', data.message || 'You are marked present for this assembly.');
+      } else {
+        Alert.alert('Check-In Failed', data.error || 'Could not register attendance.');
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to connect to check-in server.');
+    } finally {
+      setIsSubmittingCheckIn(false);
     }
   };
 
@@ -363,7 +416,27 @@ function MainAppContent() {
             {activeTab === 'settings' && (
               <ScrollView className="flex-1 p-5" keyboardShouldPersistTaps="handled">
                 <Text className="text-amber-500 font-black text-xl mb-1 tracking-wider">ACCOUNT SETTINGS</Text>
-                <Text className="text-slate-400 text-xs mb-6">Manage profile details and security</Text>
+                <Text className="text-slate-400 text-xs mb-6">Manage profile details and event check-ins</Text>
+
+                {/* General Assembly Quick Check-In Card */}
+                <View className="bg-slate-900 border border-amber-500/30 p-5 rounded-2xl mb-5 flex-row justify-between items-center shadow-lg shadow-amber-500/5">
+                  <View className="flex-1 mr-3">
+                    <Text className="text-white font-bold text-sm mb-1">General Assembly Check-In</Text>
+                    <Text className="text-slate-400 text-xs">
+                      Scan the host QR code at weekly meetings to mark your attendance.
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    onPress={() => setScannerVisible(true)}
+                    className="bg-amber-500 p-3.5 rounded-xl flex-row items-center gap-1.5 active:scale-95"
+                  >
+                    <QrCode size={16} color="#0f172a" />
+                    <Text className="text-slate-950 font-black text-xs uppercase tracking-wider">
+                      Scan
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
                 {settingsMsg.text ? (
                   <View
@@ -528,6 +601,55 @@ function MainAppContent() {
               </TouchableOpacity>
             )}
           </View>
+
+          {/* General Assembly Attendance QR Scanner Modal */}
+          <Modal
+            visible={scannerVisible}
+            animationType="slide"
+            transparent={false}
+            onRequestClose={() => setScannerVisible(false)}
+          >
+            <SafeAreaView className="flex-1 bg-slate-950 justify-between">
+              <View className="flex-row justify-between items-center p-5 border-b border-slate-800">
+                <Text className="text-white font-black text-base tracking-wide">
+                  📷 Scan Assembly Code
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setScannerVisible(false)}
+                  className="bg-slate-900 border border-slate-800 p-2 rounded-xl"
+                >
+                  <X size={20} color="#94a3b8" />
+                </TouchableOpacity>
+              </View>
+
+              <View className="flex-1 justify-center items-center overflow-hidden relative">
+                <Camera
+                  scanBarcode={true}
+                  onReadCode={handleReadCode}
+                  showFrame={true}
+                  laserColor="#f59e0b"
+                  frameColor="#f59e0b"
+                  cameraScanMode={CameraScanMode.SCAN_BARCODES}
+                  style={{ width: '100%', height: '100%' }}
+                />
+
+                {isSubmittingCheckIn && (
+                  <View className="absolute inset-0 bg-slate-950/80 justify-center items-center">
+                    <ActivityIndicator size="large" color="#f59e0b" />
+                    <Text className="text-amber-500 font-bold text-xs uppercase tracking-wider mt-3">
+                      Registering Check-In...
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <View className="p-6 bg-slate-900 border-t border-slate-800">
+                <Text className="text-slate-300 text-xs text-center font-medium">
+                  Point camera directly at the Assembly host screen to verify your presence.
+                </Text>
+              </View>
+            </SafeAreaView>
+          </Modal>
 
           <SideMenu
             visible={sideMenuOpen}
